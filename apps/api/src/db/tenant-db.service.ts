@@ -10,10 +10,6 @@ export interface AuthenticatedTenant {
   name: string;
 }
 
-export interface WebhookTarget {
-  tenantId: string;
-}
-
 export interface ScheduledWorkflow {
   id: string;
   tenantId: string;

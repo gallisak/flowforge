@@ -67,6 +67,8 @@ instead of starting half-configured. Error messages never contain secret values.
 | `PORT` | api | `3000` | integer 0..65535 |
 | `DATABASE_URL` | api, worker | — | required, `postgres://`, application role |
 | `MIGRATION_DATABASE_URL` | migrate | — | required, `postgres://`, migration role |
+| `DB_CONNECT_TIMEOUT_MS` | api, worker | `5000` | integer 100..120000; waiting for a pooled connection |
+| `DB_STATEMENT_TIMEOUT_MS` | api, worker | `15000` | integer 100..600000; server-side statement timeout, the client gives up 5 s later |
 | `ADMIN_TOKEN` | api | — | required; at least 8 characters, in production at least 32 random characters |
 | `WORKER_CONCURRENCY` | worker | `4` | integer 1..64 |
 | `SCHEDULER_TICK_MS` | api | `30000` | integer 1000..3600000 |
@@ -82,6 +84,11 @@ The schema is managed by TypeORM migrations in `apps/api/src/migrations`; `synch
 `npm run migrate` (or the `migrate` compose service) applies pending migrations under a Postgres
 advisory lock, so several migrators started at once apply each migration exactly once.
 `npm run migration:generate -- src/migrations/<Name>` generates a migration from entity changes.
+
+Every database call of the API and the workers is bounded: acquiring a connection
+(`DB_CONNECT_TIMEOUT_MS`), a statement on the server (`DB_STATEMENT_TIMEOUT_MS`), the client waiting for
+an unresponsive server (statement timeout + 5 s) and a transaction left idle (twice the statement
+timeout). When Postgres stops answering, requests fail with a generic `500` instead of hanging.
 
 Two roles are provisioned by `docker/postgres/provision.sql`:
 
@@ -145,11 +152,13 @@ The queue is the `jobs` table. One job drives one execution.
   and marks it `running` in the same statement, so concurrent workers never get the same job and
   never wait for each other. It increments `attempts`, which also serves as a fencing token.
 - **Lease and heartbeat** — a claimed job is owned until `lockedUntil`. The worker extends it every
-  third of `WORKER_LEASE_SECONDS`; if an extension fails, ownership is gone and the running step is
-  aborted.
+  third of `WORKER_LEASE_SECONDS`. When the database answers that the job is no longer owned, or when
+  no extension has succeeded for a whole lease, ownership is gone and the running step is aborted; a
+  renewal that fails because of a short database hiccup is retried on the next beat.
 - **Recovery** — every worker runs `reap_expired_jobs()` every `WORKER_REAPER_INTERVAL_MS`: jobs whose
   lease expired go back to `queued`, or to `dead` when they have no attempts left (a job that crashes
-  its worker every time cannot loop forever).
+  its worker every time cannot loop forever); a dead job and its failed execution are written in the
+  same statement.
 - **Fencing** — extending, completing, failing and releasing a job are conditional on the same
   `lockedBy` and `attempts`; completion updates the job and its execution in one transaction. A worker
   that lost its lease cannot overwrite the result of the worker that took over.

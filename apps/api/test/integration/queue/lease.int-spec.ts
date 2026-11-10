@@ -1,3 +1,4 @@
+import { JobQueueService } from '../../../src/engine/job-queue.service';
 import { Execution, Job } from '../../../src/entities';
 import { useIntegrationContext } from '../../support/context';
 import { seedTenant, seedWorkflow } from '../../support/db';
@@ -55,6 +56,24 @@ describe('job lease', () => {
       timeoutMs: 20_000,
     });
     expect(receiver.requests.filter((r) => r.path === '/slow-but-alive')).toHaveLength(1);
+    expect(await ctx.ds.getRepository(Job).findOneByOrFail({ id: job.id })).toMatchObject({ attempts: 1 });
+  });
+
+  it('is not given up because of a renewal that failed for a moment', async () => {
+    workers = await startInProcessWorkers(1);
+    const queue = workers.contexts[0].get(JobQueueService);
+    const renew = queue.extendLease.bind(queue);
+    let hiccups = 1;
+    jest.spyOn(queue, 'extendLease').mockImplementation(async (...args) => {
+      if (hiccups-- > 0) throw new Error('Connection terminated unexpectedly');
+      return renew(...args);
+    });
+    const { job } = await enqueueSlowJob('/database-hiccup');
+
+    await eventually(async () => expect(await ctx.ds.getRepository(Job).findOneByOrFail({ id: job.id })).toMatchObject({ status: 'done' }), {
+      timeoutMs: 20_000,
+    });
+    expect(receiver.requests.filter((r) => r.path === '/database-hiccup')).toHaveLength(1);
     expect(await ctx.ds.getRepository(Job).findOneByOrFail({ id: job.id })).toMatchObject({ attempts: 1 });
   });
 

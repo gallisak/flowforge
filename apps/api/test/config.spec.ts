@@ -20,6 +20,7 @@ describe('loadApiConfig', () => {
       nodeEnv: 'development',
       port: 3000,
       databaseUrl: DATABASE_URL,
+      databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
       adminToken: 'dev-admin-token',
       schedulerTickMs: 30_000,
     });
@@ -59,6 +60,8 @@ describe('loadApiConfig', () => {
     ['PORT', '70000'],
     ['PORT', '1.5'],
     ['SCHEDULER_TICK_MS', '10'],
+    ['DB_CONNECT_TIMEOUT_MS', '0'],
+    ['DB_STATEMENT_TIMEOUT_MS', 'forever'],
   ])('rejects %s=%s', (name, value) => {
     expect(problemsOf(() => loadApiConfig({ DATABASE_URL, ADMIN_TOKEN: 'dev-admin-token', [name]: value }))).toEqual([
       expect.stringMatching(new RegExp(`^${name} must be an integer`)),
@@ -98,6 +101,7 @@ describe('loadWorkerConfig', () => {
     expect(loadWorkerConfig({ DATABASE_URL })).toEqual({
       nodeEnv: 'development',
       databaseUrl: DATABASE_URL,
+      databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
       workerConcurrency: 4,
       leaseSeconds: 30,
       reaperIntervalMs: 5_000,

@@ -6,6 +6,7 @@ import { AppProcess, spawnAppProcess } from './process';
 
 export interface InProcessWorkers {
   readonly ids: string[];
+  readonly contexts: INestApplicationContext[];
   stop(): Promise<void>;
 }
 
@@ -18,6 +19,7 @@ export async function startInProcessWorkers(count: number, concurrency = 1): Pro
   }
   return {
     ids: contexts.map((c) => c.get(JobRunnerService).workerId),
+    contexts,
     async stop() {
       await Promise.all(contexts.map((c) => c.close()));
     },

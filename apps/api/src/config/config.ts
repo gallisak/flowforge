@@ -1,3 +1,5 @@
+import { DatabaseTimeouts } from '../db/data-source';
+
 type Env = Record<string, string | undefined>;
 
 export type NodeEnv = 'development' | 'test' | 'production';
@@ -6,6 +8,7 @@ export interface ApiConfig {
   nodeEnv: NodeEnv;
   port: number;
   databaseUrl: string;
+  databaseTimeouts: DatabaseTimeouts;
   adminToken: string;
   schedulerTickMs: number;
 }
@@ -13,6 +16,7 @@ export interface ApiConfig {
 export interface WorkerConfig {
   nodeEnv: NodeEnv;
   databaseUrl: string;
+  databaseTimeouts: DatabaseTimeouts;
   workerConcurrency: number;
   leaseSeconds: number;
   reaperIntervalMs: number;
@@ -82,6 +86,13 @@ class EnvReader {
     return raw;
   }
 
+  databaseTimeouts(): DatabaseTimeouts {
+    return {
+      connectTimeoutMs: this.integer('DB_CONNECT_TIMEOUT_MS', 5_000, 100, 120_000),
+      statementTimeoutMs: this.integer('DB_STATEMENT_TIMEOUT_MS', 15_000, 100, 600_000),
+    };
+  }
+
   adminToken(nodeEnv: NodeEnv): string {
     const token = this.env.ADMIN_TOKEN ?? '';
     if (token.length === 0) {
@@ -111,6 +122,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     nodeEnv,
     port: read.integer('PORT', 3000, 0, 65_535),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
+    databaseTimeouts: read.databaseTimeouts(),
     adminToken: read.adminToken(nodeEnv),
     schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 30_000, 1_000, 3_600_000),
   });
@@ -124,6 +136,7 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
   return read.done({
     nodeEnv: read.nodeEnv(),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
+    databaseTimeouts: read.databaseTimeouts(),
     workerConcurrency: read.integer('WORKER_CONCURRENCY', 4, 1, 64),
     leaseSeconds: read.integer('WORKER_LEASE_SECONDS', 30, 2, 3_600),
     reaperIntervalMs: read.integer('WORKER_REAPER_INTERVAL_MS', 5_000, 100, 600_000),

@@ -21,7 +21,7 @@ import { WorkflowsService } from './workflows/workflows.service';
     ApiConfigModule,
     TypeOrmModule.forRootAsync({
       inject: [API_CONFIG],
-      useFactory: (config: ApiConfig) => dataSourceOptions(config.databaseUrl),
+      useFactory: (config: ApiConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts),
     }),
     TypeOrmModule.forFeature(entities),
   ],
@@ -35,7 +35,7 @@ export class AppModule {}
     WorkerConfigModule,
     TypeOrmModule.forRootAsync({
       inject: [WORKER_CONFIG],
-      useFactory: (config: WorkerConfig) => dataSourceOptions(config.databaseUrl),
+      useFactory: (config: WorkerConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts),
     }),
     TypeOrmModule.forFeature(entities),
   ],

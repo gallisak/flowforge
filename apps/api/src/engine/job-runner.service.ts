@@ -99,14 +99,23 @@ export class JobRunnerService implements BeforeApplicationShutdown {
   private async processWithLease(job: Job): Promise<void> {
     const lease = new AbortController();
     this.inFlight.set(job.id, lease);
+    const leaseMs = this.config.leaseSeconds * 1000;
+    let renewedAt = Date.now();
+    const loseLease = () => {
+      if (!lease.signal.aborted) lease.abort(new LeaseLostError(job.id));
+    };
     const heartbeat = setInterval(() => {
-      this.queue
-        .extendLease(job, this.workerId, this.config.leaseSeconds)
-        .catch(() => false)
-        .then((kept) => {
-          if (!kept && !lease.signal.aborted) lease.abort(new LeaseLostError(job.id));
-        });
-    }, (this.config.leaseSeconds * 1000) / 3);
+      this.queue.extendLease(job, this.workerId, this.config.leaseSeconds).then(
+        (kept) => {
+          if (kept) renewedAt = Date.now();
+          else loseLease();
+        },
+        (err: Error) => {
+          this.logger.warn(`could not renew lease on job ${job.id}: ${err.message}`);
+          if (Date.now() - renewedAt >= leaseMs) loseLease();
+        },
+      );
+    }, leaseMs / 3);
     try {
       await this.process(job, lease.signal);
     } finally {

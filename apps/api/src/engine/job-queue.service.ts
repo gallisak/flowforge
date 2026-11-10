@@ -96,18 +96,8 @@ export class JobQueueService {
     });
   }
 
-  async reapExpired(): Promise<ReapedJob[]> {
-    const reaped = await this.db.reapExpiredJobs();
-    for (const job of reaped.filter((r) => r.status === 'dead')) {
-      await this.db.run(job.tenantId, (em) =>
-        em.update(Execution, job.executionId, {
-          status: 'failed',
-          error: `lease expired ${job.attempts} times: the job was abandoned by its worker on every attempt`,
-          finishedAt: new Date(),
-        }),
-      );
-    }
-    return reaped;
+  reapExpired(): Promise<ReapedJob[]> {
+    return this.db.reapExpiredJobs();
   }
 
   private ownedBy(job: Job, workerId: string) {
