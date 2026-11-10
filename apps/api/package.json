@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest",
     "test:unit": "jest --selectProjects unit",
-    "test:int": "jest --selectProjects integration"
+    "test:int": "jest --selectProjects integration",
+    "load:fairness": "ts-node --transpile-only test/load/fairness.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
