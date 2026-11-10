@@ -7,6 +7,7 @@ import { seedTenant, seedWorkflow, SeededTenant } from '../../support/db';
 const TENANT_TABLES = [
   { table: 'tenants', tenantColumn: 'id' },
   { table: 'workflows', tenantColumn: 'tenantId' },
+  { table: 'workflow_versions', tenantColumn: 'tenantId' },
   { table: 'executions', tenantColumn: 'tenantId' },
   { table: 'step_runs', tenantColumn: 'tenantId' },
   { table: 'jobs', tenantColumn: 'tenantId' },

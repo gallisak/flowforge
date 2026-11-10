@@ -181,9 +181,52 @@ The queue is the `jobs` table. One job drives one execution.
 | `LISTEN/NOTIFY` as the queue | Not durable; useful only as a wake-up signal. |
 | Redis / RabbitMQ | Out of scope by the task: the queue must live in Postgres. |
 
-Limitations at this point: a retry still re-runs the workflow from the first step and steps are not
-idempotent yet (addressed by durable execution); claim order is global FIFO by `runAt` (per-tenant
-fairness comes with tenant limits); idle workers poll every 250 ms.
+Limitations: claim order is global FIFO by `runAt` (per-tenant fairness comes with tenant limits);
+idle workers poll every 250 ms.
+
+## Durable execution
+
+- **Version snapshot** — every change of a workflow's steps writes an immutable row to
+  `workflow_versions`; an execution records the version current when it was enqueued and the worker
+  reads the steps only from that snapshot. Editing a workflow never changes executions that already
+  exist; deleting it cancels the unfinished ones.
+- **Checkpoints** — each step has exactly one `step_runs` row (unique `(executionId, stepIndex)`) with
+  its status, output, error, number of attempts and timestamps. On every attempt the worker rebuilds
+  `ctx.steps` from the outputs of succeeded steps and continues at the first step without a successful
+  checkpoint; a finished step is never recomputed.
+- **Fencing** — starting a step, recording its result and recording its failure each run in one
+  transaction that first locks the job row and checks that this worker still owns it (`lockedBy` and
+  `attempts`). Completing the execution updates the job and the execution together.
+- **Idempotency keys** — every request of an `http` step carries `Idempotency-Key:
+  <executionId>:<stepId>`, identical for all attempts of that step in that execution and different for
+  any other step or execution; a key set by the tenant on the step is replaced. The key is stored on the
+  checkpoint.
+- **Durable timers** — a `delay` step stores `wakeAt` on its checkpoint, sets the execution to
+  `waiting` and returns the job to the queue with `runAt = wakeAt` without counting an attempt, so it
+  occupies no worker slot. The step completes on the first claim after `wakeAt` by the database clock.
+
+### Guarantees
+
+| Unit | Guarantee | Conditions and windows |
+|---|---|---|
+| `transform`, `log` step | Executed at least once; its recorded result is final once committed | A worker that dies or loses its lease after computing but before committing the checkpoint causes one more execution (a log line may appear twice). |
+| `http` step | Delivered at least once; **effectively once** for receivers that deduplicate by `Idempotency-Key` | A second delivery happens when the worker dies, loses its lease or times out after the request left and before the checkpoint was committed. Every delivery of the step carries the same key. |
+| `delay` step | Wakes up no earlier than `wakeAt`, exactly once | Late by the claim interval (≤ 250 ms when a worker is idle) plus queue wait. Survives restarts and crashes. |
+| Execution | Uses one workflow version; reaches `succeeded` or `failed` at most once; every step result is committed at most once | Requires at least one running worker. `failed` after a non-retryable error, after `maxAttempts` retryable failures, or when its workflow is deleted. |
+| Job | Owned by at most one worker at a time | Ownership lasts `WORKER_LEASE_SECONDS` and is renewed by heartbeat; an expired lease is reclaimed by the reaper. |
+
+The chaos test `apps/api/test/integration/chaos/worker-killed-mid-step.int-spec.ts` demonstrates the
+table: a worker process is killed with `SIGKILL` while the receiver holds the second of three HTTP
+steps; another worker reclaims the job after the lease expires, does not repeat the first step,
+repeats the interrupted step with the same key, and a receiver that honours the key applies each of
+the three effects once.
+
+| Decision | Options considered | Chosen |
+|---|---|---|
+| Version snapshot | copy steps into each execution; forbid edits while running; **versions table** | Versions table: one copy per version, full history, cheap reference from executions. |
+| Checkpoints | append-only attempt log; results in the job row; event sourcing; **one row per step** | One row per step with an attempt counter: the current state is a single lookup and the history needed for debugging is kept. |
+| Idempotency key | random per attempt (useless for dedupe); hash of the request body (changes when templates render differently); **execution + step id** | Stable, readable, unique per step and execution. |
+| Timers | in-memory sleep; `pg_sleep`; separate timers table; **queue `runAt`** | The queue already is a durable timer. |
 
 ## Tests
 
@@ -357,6 +400,81 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   `ON DELETE CASCADE` (silently deletes execution history). Executions will work from a snapshot of the
   workflow version taken at start (durable execution phase), so deleting a workflow will no longer
   affect executions that already started.
+
+### F-18 · A retry repeats steps that already succeeded (includes F-21) · Execution properties · Critical
+
+- **What:** `apps/api/src/engine/job-runner.service.ts:60-73` runs the workflow from step 0 on every
+  attempt and inserts a new `step_runs` row each time; nothing reads earlier results back. The step
+  bookkeeping is also not atomic or owned (finding F-21 of the audit): a step row is created, the step
+  runs, and the row is updated in separate statements that any worker may write.
+- **Why it is dangerous:** one failing step at the end of a workflow repeats every side effect before
+  it on each retry: a payment step followed by a flaky notification charges the customer once per
+  retry. `step_runs` fills with duplicates and orphaned `running` rows, so the history does not say
+  which attempt produced the result.
+- **How to reproduce:** `apps/api/test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts`
+  runs `charge (POST) → notify (fails once) → log`. On the starter code the charge endpoint is called
+  twice and five step records exist for three steps. `scripts/prove-finding.sh F-18`.
+- **How it was fixed:**
+  - a step has exactly one checkpoint row: unique `(executionId, stepIndex)`, `attempts` counter,
+    `finishedAt` (the migration merges existing duplicates, keeping the successful or latest row);
+  - on every attempt the worker rebuilds `ctx.steps` from the stored outputs of succeeded steps and
+    starts at the first step without a successful checkpoint; a finished step is never recomputed;
+  - starting a step, recording its result and recording its failure each run in one transaction that
+    first locks the job row and checks `lockedBy`/`attempts` (fencing), so a worker that lost its lease
+    cannot overwrite the checkpoints of the new owner;
+  - while a job waits for a retry its execution is `pending` with the last error instead of `running`.
+  - Tests: `apps/api/test/integration/execution/checkpoints.int-spec.ts`.
+- **Alternatives considered:** an append-only log of step attempts (full history, but every reader has
+  to fold it to find the current state; the attempt count on the checkpoint is enough here); caching
+  results in the job row (one big JSON rewritten per step, no per-step status); event sourcing as in
+  Temporal (out of scope by the task).
+
+### F-19 · A running execution picks up edits of its workflow · Execution properties · High
+
+- **What:** `apps/api/src/workflows/workflows.service.ts:45-48` increments `version` when the steps
+  change but keeps only the latest steps; executions do not record a version, and every attempt of a
+  job loads the *current* workflow (`apps/api/src/engine/job-runner.service.ts:54,60`).
+- **Why it is dangerous:** an execution started with one definition can continue with another: a
+  retry after an edit runs steps the user never ran this input through, may call different endpoints
+  and mixes outputs of two versions in `ctx.steps`. Nobody can tell afterwards which definition an
+  execution actually used.
+- **How to reproduce:** `apps/api/test/integration/findings/F-19-workflow-version-snapshot.int-spec.ts`:
+  version 1 fails on its second step, the steps are edited while the job waits for its retry, then the
+  retry runs. On the starter code the retry calls the endpoints of version 2. `scripts/prove-finding.sh F-19`.
+- **How it was fixed:** every create and every change of the steps writes an immutable row to
+  `workflow_versions` in the same transaction (the workflow row is locked, so concurrent edits get
+  distinct versions); enqueueing records `executions.workflowVersion` under a share lock on the workflow;
+  the worker reads the steps only from that snapshot. Deleting a workflow still cancels its unfinished
+  executions on purpose: deletion is an explicit user action, an edit is not. Tests:
+  `apps/api/test/integration/execution/workflow-versions.int-spec.ts`.
+- **Alternatives considered:** copying the steps into every execution (simple, but duplicates the
+  definition per run and loses the history of versions); refusing to edit a workflow with unfinished
+  executions (blocks users for as long as a delay step lasts); letting deletion run started executions
+  to the end (possible with snapshots, but surprising for a user who deletes a workflow to stop it).
+
+### F-20 · A delay holds a worker slot and restarts after a crash · Execution properties · High
+
+- **What:** `apps/api/src/engine/step-executor.ts:20-22` implements `delay` as an in-memory
+  `setTimeout` inside the job, for up to an hour.
+- **Why it is dangerous:** every waiting execution occupies a worker slot, so a handful of long delays
+  stalls the queue for all tenants; the lease (60 s) is far shorter than the delay, so the job looks
+  abandoned; a restart or crash loses the timer, and the delay starts again from zero together with
+  every step before it.
+- **How to reproduce:** `apps/api/test/integration/findings/F-20-durable-delay.int-spec.ts`: a worker
+  with one slot must run another execution while the first one waits; the job must be released with a
+  stored wake-up time; a worker killed with `SIGKILL` in the middle of a 3 s delay must not restart it.
+  On the starter code the second execution waits, nothing is stored, and after the crash the next
+  step runs 5.2 s after the previous one. `scripts/prove-finding.sh F-20`.
+- **How it was fixed:** a delay is a durable timer. Starting it writes, in one fenced transaction, a
+  `waiting` checkpoint with `wakeAt = now() + ms`, sets the execution to `waiting` and puts the job back
+  in the queue with `runAt = wakeAt` without counting an attempt; the worker slot is free immediately.
+  When the job is claimed again the step completes only if `wakeAt` has passed according to the
+  database clock; a job picked up early (for example after a shutdown release) goes back to sleep until
+  the same `wakeAt`. Tests: `apps/api/test/integration/execution/durable-timers.int-spec.ts`.
+- **Alternatives considered:** a separate `timers` table polled by a scheduler (one more moving part;
+  the queue's `runAt` already is a durable timer); keeping short delays in memory below a threshold
+  (two behaviours for one step type and still lost on crash); `pg_sleep` in the database (holds a
+  connection instead of a slot).
 
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 

@@ -12,8 +12,19 @@ export class ExecutionsService {
     trigger: Execution['trigger'],
   ): Promise<Execution> {
     return this.db.run(workflow.tenantId, async (em) => {
+      const current = await em.findOne(Workflow, {
+        where: { id: workflow.id, tenantId: workflow.tenantId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!current) throw new NotFoundException('Workflow not found');
       const execution = await em.save(
-        em.create(Execution, { tenantId: workflow.tenantId, workflowId: workflow.id, input, trigger }),
+        em.create(Execution, {
+          tenantId: workflow.tenantId,
+          workflowId: workflow.id,
+          workflowVersion: current.version,
+          input,
+          trigger,
+        }),
       );
       await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: execution.id }));
       return execution;

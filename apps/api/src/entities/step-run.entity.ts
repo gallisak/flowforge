@@ -1,7 +1,9 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+export type StepRunStatus = 'running' | 'waiting' | 'succeeded' | 'failed';
+
 @Entity('step_runs')
-@Index(['executionId', 'stepIndex'])
+@Index('UQ_step_runs_execution_step', ['executionId', 'stepIndex'], { unique: true })
 export class StepRun {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -19,7 +21,13 @@ export class StepRun {
   stepId: string;
 
   @Column({ type: 'varchar', default: 'running' })
-  status: 'running' | 'succeeded' | 'failed';
+  status: StepRunStatus;
+
+  @Column({ type: 'int', default: 0 })
+  attempts: number;
+
+  @Column({ type: 'varchar', nullable: true })
+  idempotencyKey: string | null;
 
   @Column({ type: 'jsonb', nullable: true })
   output: unknown;
@@ -29,4 +37,10 @@ export class StepRun {
 
   @CreateDateColumn()
   startedAt: Date;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  wakeAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  finishedAt: Date | null;
 }

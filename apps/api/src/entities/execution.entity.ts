@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-export type ExecutionStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+export type ExecutionStatus = 'pending' | 'running' | 'waiting' | 'succeeded' | 'failed';
 
 @Entity('executions')
 @Index(['tenantId', 'createdAt'])
@@ -13,6 +13,9 @@ export class Execution {
 
   @Column('uuid')
   workflowId: string;
+
+  @Column({ type: 'int', default: 1 })
+  workflowVersion: number;
 
   @Column({ type: 'varchar', default: 'pending' })
   status: ExecutionStatus;
