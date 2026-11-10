@@ -1,5 +1,19 @@
-import { Body, Controller, Headers, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Headers,
+  HttpCode,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  UnauthorizedException,
+  UnsupportedMediaTypeException,
+} from '@nestjs/common';
 import { createHmac } from 'crypto';
+import { Request } from 'express';
+import { RawBodyRequest } from '../app.setup';
 import { TenantDb } from '../db/tenant-db.service';
 import { Tenant, Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
@@ -15,9 +29,12 @@ export class WebhooksController {
   @HttpCode(202)
   async receive(
     @Param('workflowId', ParseUUIDPipe) workflowId: string,
-    @Body() body: Record<string, unknown>,
+    @Req() req: Request & RawBodyRequest,
     @Headers('x-signature') signature?: string,
   ) {
+    if (!req.is('application/json') || !req.rawBody) throw new UnsupportedMediaTypeException('Webhook body must be application/json');
+    const body: unknown = req.body;
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new BadRequestException('Webhook body must be a JSON object');
     const tenantId = await this.db.resolveWebhookTenant(workflowId);
     if (!tenantId) throw new NotFoundException();
     const { workflow, tenant } = await this.db.run(tenantId, async (em) => ({
@@ -26,12 +43,12 @@ export class WebhooksController {
     }));
     if (!workflow || !workflow.enabled || !tenant) throw new NotFoundException();
 
-    const expected = createHmac('sha256', tenant.webhookSecret).update(JSON.stringify(body)).digest('hex');
+    const expected = createHmac('sha256', tenant.webhookSecret).update(req.rawBody).digest('hex');
     if (signature !== expected) {
       throw new UnauthorizedException('Invalid signature');
     }
 
-    const execution = await this.executions.enqueue(workflow, body, 'webhook');
+    const execution = await this.executions.enqueue(workflow, body as Record<string, unknown>, 'webhook');
     return { executionId: execution.id };
   }
 }
