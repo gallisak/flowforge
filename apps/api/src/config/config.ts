@@ -27,6 +27,8 @@ export interface WorkerConfig {
   transformMemoryMb: number;
   httpTimeoutMs: number;
   httpMaxRedirects: number;
+  httpMaxResponseBytes: number;
+  stepOutputMaxBytes: number;
   ssrfAllowlist: readonly string[];
 }
 
@@ -163,6 +165,8 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     transformMemoryMb: read.integer('TRANSFORM_MEMORY_MB', 32, 4, 512),
     httpTimeoutMs: read.integer('HTTP_TIMEOUT_MS', 15_000, 100, 120_000),
     httpMaxRedirects: read.integer('HTTP_MAX_REDIRECTS', 5, 0, 10),
+    httpMaxResponseBytes: read.integer('HTTP_MAX_RESPONSE_BYTES', 1_048_576, 1_024, 67_108_864),
+    stepOutputMaxBytes: read.integer('STEP_OUTPUT_MAX_BYTES', 1_048_576, 1_024, 16_777_216),
     ssrfAllowlist: read.allowlist('SSRF_ALLOWLIST'),
   });
 }

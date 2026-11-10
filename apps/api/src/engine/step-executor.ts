@@ -4,6 +4,7 @@ import { StepDefinition } from '../entities';
 import {
   findDestinationError,
   InvalidRequestUrlError,
+  ResponseTooLargeError,
   SafeHttpClient,
   SafeHttpResponse,
   TooManyRedirectsError,
@@ -33,6 +34,13 @@ export function stepIdempotencyKey(executionId: string, stepId: string): string 
 }
 
 const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+export const LOG_MESSAGE_MAX_LENGTH = 2_048;
+
+export function sanitizeLogMessage(message: string): string {
+  const singleLine = message.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+  return singleLine.length > LOG_MESSAGE_MAX_LENGTH ? `${singleLine.slice(0, LOG_MESSAGE_MAX_LENGTH)}...` : singleLine;
+}
+
 const MAX_SANDBOX_THREADS = 4;
 
 @Injectable()
@@ -40,13 +48,16 @@ export class StepExecutor implements OnApplicationShutdown {
   private readonly logger = new Logger(StepExecutor.name);
   private readonly sandbox: TransformSandbox;
   private readonly httpClient: SafeHttpClient;
+  private readonly outputMaxBytes: number;
 
   constructor(@Inject(WORKER_CONFIG) config: WorkerConfig) {
     this.httpClient = new SafeHttpClient({
       allowlist: config.ssrfAllowlist,
       timeoutMs: config.httpTimeoutMs,
       maxRedirects: config.httpMaxRedirects,
+      maxResponseBytes: config.httpMaxResponseBytes,
     });
+    this.outputMaxBytes = config.stepOutputMaxBytes;
     this.sandbox = new TransformSandbox(
       {
         timeoutMs: config.transformTimeoutMs,
@@ -62,9 +73,16 @@ export class StepExecutor implements OnApplicationShutdown {
   }
 
   async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
+    const output = await this.run(step, ctx, runtime);
+    const size = output === undefined ? 0 : Buffer.byteLength(JSON.stringify(output));
+    if (size > this.outputMaxBytes) throw new StepError(`step output exceeds ${this.outputMaxBytes} bytes`, false);
+    return output;
+  }
+
+  private async run(step: StepDefinition, ctx: StepContext, runtime: StepRuntime): Promise<unknown> {
     switch (step.type) {
       case 'log':
-        this.logger.log(renderTemplate(step.message, ctx));
+        this.logger.log(sanitizeLogMessage(renderTemplate(step.message, ctx)));
         return { logged: true };
       case 'delay':
         throw new StepError('delay steps are durable timers scheduled by the job runner', false);
@@ -116,7 +134,9 @@ export class StepExecutor implements OnApplicationShutdown {
   private httpFailure(err: unknown): StepError {
     const blocked = findDestinationError(err);
     if (blocked) return new StepError(blocked.message, false);
-    if (err instanceof InvalidRequestUrlError || err instanceof TooManyRedirectsError) return new StepError(err.message, false);
+    if (err instanceof InvalidRequestUrlError || err instanceof TooManyRedirectsError || err instanceof ResponseTooLargeError) {
+      return new StepError(err.message, false);
+    }
     const name = (err as Error).name;
     const timedOut = name === 'TimeoutError' || name === 'HeadersTimeoutError' || name === 'BodyTimeoutError';
     return new StepError(timedOut ? 'http request timed out' : 'http request failed: connection error', true);

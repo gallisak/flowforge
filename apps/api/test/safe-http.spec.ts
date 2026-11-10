@@ -6,6 +6,7 @@ import {
   InvalidRequestUrlError,
   isPublicAddress,
   Resolver,
+  ResponseTooLargeError,
   SafeHttpClient,
   TooManyRedirectsError,
 } from '../src/engine/http/safe-http';
@@ -110,12 +111,20 @@ describe('SafeHttpClient', () => {
       else if (kind === 'loop') res.writeHead(302, { location: '/loop' }).end();
       else if (kind === 'blocked') res.writeHead(307, { location: `${blocked.url}/landed` }).end();
       else if (kind === 'hang') return;
+      else if (kind === 'big') res.writeHead(200).end('b'.repeat(1_025));
+      else if (kind === 'exact') res.writeHead(200).end('e'.repeat(1_024));
+      else if (kind === 'chunked') {
+        res.writeHead(200);
+        for (let i = 0; i < 20; i++) res.write('c'.repeat(100));
+        res.end();
+      }
       else res.writeHead(200).end(kind);
     });
     client = new SafeHttpClient({
       allowlist: [hostOf(allowed), hostOf(other)],
       timeoutMs: 1_000,
       maxRedirects: 3,
+      maxResponseBytes: 1_024,
       resolve,
     });
   });
@@ -206,6 +215,18 @@ describe('SafeHttpClient', () => {
     const started = Date.now();
     await expect(send(`${allowed.url}/hang`)).rejects.toMatchObject({ name: 'TimeoutError' });
     expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('refuses a body one byte above the limit', async () => {
+    await expect(send(`${allowed.url}/big`)).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  it('refuses a chunked body that grows past the limit', async () => {
+    await expect(send(`${allowed.url}/chunked`)).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  it('accepts a body of exactly the limit', async () => {
+    await expect(send(`${allowed.url}/exact`)).resolves.toEqual({ status: 200, body: 'e'.repeat(1_024) });
   });
 
   it('returns status and body of an allowed destination', async () => {

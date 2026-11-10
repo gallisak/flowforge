@@ -112,6 +112,8 @@ describe('loadWorkerConfig', () => {
       transformMemoryMb: 32,
       httpTimeoutMs: 15_000,
       httpMaxRedirects: 5,
+      httpMaxResponseBytes: 1_048_576,
+      stepOutputMaxBytes: 1_048_576,
       ssrfAllowlist: [],
     });
   });

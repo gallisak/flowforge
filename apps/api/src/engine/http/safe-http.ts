@@ -9,6 +9,7 @@ export interface SafeHttpOptions {
   allowlist: readonly string[];
   timeoutMs: number;
   maxRedirects: number;
+  maxResponseBytes: number;
   connectTimeoutMs?: number;
   resolve?: Resolver;
 }
@@ -34,6 +35,12 @@ export class DestinationNotAllowedError extends Error {
 export class InvalidRequestUrlError extends Error {}
 
 export class TooManyRedirectsError extends Error {}
+
+export class ResponseTooLargeError extends Error {
+  constructor(limit: number) {
+    super(`http response body exceeds ${limit} bytes`);
+  }
+}
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const CREDENTIAL_HEADERS = new Set(['authorization', 'cookie', 'proxy-authorization']);
@@ -118,7 +125,7 @@ export class SafeHttpClient {
       const response = await request(url, { method, headers, body, signal, dispatcher: this.dispatcherFor(url) });
       const location = response.headers.location;
       if (!REDIRECT_STATUSES.has(response.statusCode) || typeof location !== 'string') {
-        return { status: response.statusCode, body: await response.body.text() };
+        return { status: response.statusCode, body: await this.readBody(response) };
       }
       await response.body.dump();
       if (hop >= this.options.maxRedirects) throw new TooManyRedirectsError(`more than ${this.options.maxRedirects} redirects`);
@@ -133,6 +140,26 @@ export class SafeHttpClient {
       }
       url = next;
     }
+  }
+
+  private async readBody(response: Dispatcher.ResponseData): Promise<string> {
+    const limit = this.options.maxResponseBytes;
+    const declared = Number(response.headers['content-length']);
+    if (Number.isFinite(declared) && declared > limit) {
+      response.body.destroy();
+      throw new ResponseTooLargeError(limit);
+    }
+    const chunks: Buffer[] = [];
+    let received = 0;
+    for await (const chunk of response.body) {
+      received += (chunk as Buffer).length;
+      if (received > limit) {
+        response.body.destroy();
+        throw new ResponseTooLargeError(limit);
+      }
+      chunks.push(chunk as Buffer);
+    }
+    return Buffer.concat(chunks).toString('utf8');
   }
 
   async close(): Promise<void> {
