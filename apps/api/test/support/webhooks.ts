@@ -23,6 +23,11 @@ export async function createWebhookTarget(app: INestApplication, name: string): 
   return { apiKey: tenant.body.apiKey, webhookSecret: tenant.body.webhookSecret, workflowId: workflow.body.id };
 }
 
-export function signWebhook(secret: string, body: string): Record<string, string> {
+export interface WebhookDelivery {
+  id?: string;
+  timestamp?: number;
+}
+
+export function signWebhook(secret: string, body: string, _delivery: WebhookDelivery = {}): Record<string, string> {
   return { 'x-signature': createHmac('sha256', secret).update(body).digest('hex') };
 }
