@@ -43,6 +43,7 @@ reproduction of a finding fails before its fix and passes after it.
 | F-23 | Input is not validated at the API boundary | `test/integration/findings/F-23-input-validation.int-spec.ts` |
 | F-25 | API runs as a database superuser and accepts a placeholder admin token | `test/integration/findings/F-25-least-privilege.int-spec.ts` |
 | F-26 | A NUL character makes data impossible to store | `test/integration/findings/F-26-nul-characters.int-spec.ts` |
+| F-27 | Deeply nested JSON crashes the API and poisons steps | `test/integration/findings/F-27-deeply-nested-json.int-spec.ts` |
 
 ## Changes to existing tests
 
