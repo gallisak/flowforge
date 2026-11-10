@@ -1,13 +1,14 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
+import { loadApiConfig, loadConfigOrExit } from './config/config';
 
 async function bootstrap() {
+  const config = loadConfigOrExit(() => loadApiConfig());
   const app = await NestFactory.create(AppModule);
   configureApp(app);
   app.enableShutdownHooks();
-  const port = Number(process.env.PORT ?? 3000);
-  await app.listen(port);
-  console.log(`flowforge-api listening on ${port}`);
+  await app.listen(config.port);
+  console.log(`flowforge-api listening on ${config.port}`);
 }
 bootstrap();

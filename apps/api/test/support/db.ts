@@ -1,14 +1,16 @@
 import { randomBytes } from 'crypto';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { entities } from '../../src/app.module';
 import { hashApiKey } from '../../src/auth/api-key.guard';
+import { dataSourceOptions } from '../../src/db/data-source';
 import { StepDefinition, Tenant, Workflow } from '../../src/entities';
-import { TEMPLATE_DB, withDatabase } from './schema';
+import { DB_ROLES, TEMPLATE_DB, withCredentials, withDatabase } from './schema';
 
 export interface TestDatabase {
   name: string;
   url: string;
+  ownerUrl: string;
+  adminUrl: string;
   drop(): Promise<void>;
 }
 
@@ -27,9 +29,12 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   } finally {
     await admin.end();
   }
+  const databaseUrl = withDatabase(adminUrl(), name);
   return {
     name,
-    url: withDatabase(adminUrl(), name),
+    url: withCredentials(databaseUrl, DB_ROLES.app),
+    ownerUrl: withCredentials(databaseUrl, DB_ROLES.owner),
+    adminUrl: databaseUrl,
     async drop() {
       const c = new Client({ connectionString: adminUrl() });
       await c.connect();
@@ -43,8 +48,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 }
 
 export async function openDataSource(url: string): Promise<DataSource> {
-  const ds = new DataSource({ type: 'postgres', url, entities, synchronize: false });
-  return ds.initialize();
+  return new DataSource(dataSourceOptions(url)).initialize();
 }
 
 export interface SeededTenant {

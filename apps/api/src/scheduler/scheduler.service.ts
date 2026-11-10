@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { parseExpression } from 'cron-parser';
 import { Repository } from 'typeorm';
+import { API_CONFIG, ApiConfig } from '../config/config';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
 
@@ -14,10 +15,11 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
   constructor(
     @InjectRepository(Workflow) private readonly workflows: Repository<Workflow>,
     private readonly executions: ExecutionsService,
+    @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
   onApplicationBootstrap(): void {
-    const every = Number(process.env.SCHEDULER_TICK_MS ?? 30_000);
+    const every = this.config.schedulerTickMs;
     this.timer = setInterval(() => void this.tick().catch((e) => this.logger.error(e.message)), every);
   }
 

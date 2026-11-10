@@ -23,7 +23,7 @@ export class JobRunnerService implements OnApplicationShutdown {
     @InjectRepository(StepRun) private readonly stepRuns: Repository<StepRun>,
   ) {}
 
-  start(concurrency = Number(process.env.WORKER_CONCURRENCY ?? 4)): void {
+  start(concurrency: number): void {
     this.running = true;
     this.logger.log(`${this.workerId} started, concurrency=${concurrency}`);
     for (let i = 0; i < concurrency; i++) void this.loop();

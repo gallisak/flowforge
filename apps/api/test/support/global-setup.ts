@@ -1,7 +1,7 @@
 import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { Client } from 'pg';
 import { postgresContainerRegistry } from './container';
-import { prepareTemplate, TEMPLATE_DB, withDatabase } from './schema';
+import { EMPTY_TEMPLATE_DB, prepareTemplates, PROVISION_SQL, PROVISION_SQL_IN_CONTAINER, TEMPLATE_DB } from './schema';
 
 export default async function globalSetup(): Promise<void> {
   let adminUrl = process.env.TEST_DATABASE_URL;
@@ -12,6 +12,7 @@ export default async function globalSetup(): Promise<void> {
       .withUsername('flowforge')
       .withPassword('flowforge')
       .withTmpFs({ '/var/lib/postgresql/data': 'rw' })
+      .withCopyFilesToContainer([{ source: PROVISION_SQL, target: PROVISION_SQL_IN_CONTAINER }])
       .withCommand([
         'postgres',
         '-c', 'fsync=off',
@@ -27,13 +28,15 @@ export default async function globalSetup(): Promise<void> {
   const admin = new Client({ connectionString: adminUrl });
   await admin.connect();
   try {
-    await admin.query(`DROP DATABASE IF EXISTS ${TEMPLATE_DB} WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE ${TEMPLATE_DB}`);
+    for (const template of [TEMPLATE_DB, EMPTY_TEMPLATE_DB]) {
+      await admin.query(`DROP DATABASE IF EXISTS ${template} WITH (FORCE)`);
+      await admin.query(`CREATE DATABASE ${template}`);
+    }
   } finally {
     await admin.end();
   }
 
-  await prepareTemplate(withDatabase(adminUrl, TEMPLATE_DB));
+  await prepareTemplates(adminUrl);
 
   process.env.FF_TEST_ADMIN_URL = adminUrl;
 }

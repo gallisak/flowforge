@@ -13,7 +13,7 @@ export function useIntegrationContext(): IntegrationContext {
   beforeAll(async () => {
     db = await createTestDatabase();
     process.env.DATABASE_URL = db.url;
-    ds = await openDataSource(db.url);
+    ds = await openDataSource(db.adminUrl);
   });
 
   afterAll(async () => {
