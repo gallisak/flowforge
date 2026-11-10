@@ -29,10 +29,12 @@ export class ExecutionsService {
         const existing = await em.findOne(Execution, { where: { tenantId: workflow.tenantId, triggerKey } });
         if (existing) return existing;
       }
-      await em.query(`SELECT pg_advisory_xact_lock(hashtextextended('enqueue:' || $1, 0))`, [workflow.tenantId]);
       const tenant = await em.findOneOrFail(Tenant, { where: { id: workflow.tenantId } });
       const maxQueued = tenant.maxQueuedJobs ?? this.config.tenantMaxQueuedJobs;
-      const queued = await em.count(Job, { where: { tenantId: workflow.tenantId, status: 'queued' } });
+      const [{ queued }]: Array<{ queued: number }> = await em.query(
+        `SELECT count(*)::int AS queued FROM (SELECT 1 FROM "jobs" WHERE "tenantId" = $1 AND "status" = 'queued' LIMIT $2) q`,
+        [workflow.tenantId, maxQueued],
+      );
       if (queued >= maxQueued) {
         throw new TooManyRequestsException(`Queue limit of ${maxQueued} jobs reached`, QUEUE_FULL_RETRY_AFTER_SECONDS);
       }

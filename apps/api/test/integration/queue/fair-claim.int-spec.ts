@@ -77,6 +77,24 @@ describe('fair job claim', () => {
     expect(await claim()).toBe(first);
   });
 
+  it('gives every concurrent claimer a job when a single tenant has enough work', async () => {
+    await tenantWithJobs('only-tenant', 20);
+    const clients = await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        const client = new Client({ connectionString: ctx.db.url });
+        await client.connect();
+        return client;
+      }),
+    );
+    try {
+      const claimed = await Promise.all(clients.map((c) => c.query(`SELECT * FROM claim_job('fair-test', 30)`)));
+      expect(claimed.map((r) => r.rows.length)).toEqual(Array(8).fill(1));
+      expect(new Set(claimed.map((r) => r.rows[0].id)).size).toBe(8);
+    } finally {
+      await Promise.all(clients.map((c) => c.end()));
+    }
+  });
+
   it('keeps its scheduling state away from the application role', async () => {
     await expect(app.query('SELECT * FROM tenant_queue_state')).rejects.toThrow(/permission denied/);
   });
