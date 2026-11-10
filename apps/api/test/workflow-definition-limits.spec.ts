@@ -23,6 +23,9 @@ describe('validateSteps limits', () => {
     ['an invalid header name', { 'bad header': 'x' }],
     ['a forbidden host header', { Host: 'internal.service' }],
     ['a forbidden content-length header', { 'content-length': '1' }],
+    ['a forbidden upgrade header', { Upgrade: 'websocket' }],
+    ['a forbidden expect header', { Expect: '100-continue' }],
+    ['a forbidden keep-alive header', { 'Keep-Alive': 'timeout=5' }],
     ['too many headers', Object.fromEntries(Array.from({ length: STEP_LIMITS.headers + 1 }, (_, i) => [`x-h${i}`, 'v']))],
     ['a value that is too long', { 'x-long': 'v'.repeat(STEP_LIMITS.headerValueLength + 1) }],
   ])('rejects headers with %s', (_case, headers) => {

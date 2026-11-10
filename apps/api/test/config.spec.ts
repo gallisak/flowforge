@@ -108,7 +108,28 @@ describe('loadWorkerConfig', () => {
       shutdownGraceMs: 25_000,
       retryBaseMs: 1_000,
       retryCapMs: 300_000,
+      transformTimeoutMs: 100,
+      transformMemoryMb: 32,
+      httpTimeoutMs: 15_000,
+      httpMaxRedirects: 5,
+      httpMaxResponseBytes: 1_048_576,
+      stepOutputMaxBytes: 1_048_576,
+      ssrfAllowlist: [],
     });
+  });
+
+  it('reads the ssrf allowlist as normalized host and host:port entries', () => {
+    expect(loadWorkerConfig({ DATABASE_URL, SSRF_ALLOWLIST: ' Mock-API:8080, localhost ,[::1]:9000,' }).ssrfAllowlist).toEqual([
+      'mock-api:8080',
+      'localhost',
+      '[::1]:9000',
+    ]);
+  });
+
+  it.each(['http://mock:8080', 'mock:port', 'mock/path', '10.0.0.0/8'])('rejects the ssrf allowlist entry %s', (entry) => {
+    expect(problemsOf(() => loadWorkerConfig({ DATABASE_URL, SSRF_ALLOWLIST: entry }))).toEqual([
+      'SSRF_ALLOWLIST entries must look like host or host:port',
+    ]);
   });
 
   it('rejects a retry cap below the retry base', () => {

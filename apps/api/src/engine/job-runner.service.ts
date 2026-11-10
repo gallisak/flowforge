@@ -1,6 +1,7 @@
 import { BeforeApplicationShutdown, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
+import { storableText } from '../common/storable';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Workflow, WorkflowVersion } from '../entities';
@@ -186,7 +187,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         return;
       }
       const retryable = err instanceof StepError ? err.retryable : true;
-      await this.queue.fail(job, this.workerId, (err as Error).message, retryable, {
+      await this.queue.fail(job, this.workerId, storableText((err as Error).message), retryable, {
         baseMs: this.config.retryBaseMs,
         capMs: this.config.retryCapMs,
       });
@@ -195,7 +196,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
 
   private async recordStepFailure(job: Job, stepRunId: string, err: Error): Promise<void> {
     try {
-      await this.queue.finishStep(job, this.workerId, stepRunId, { error: err.message });
+      await this.queue.finishStep(job, this.workerId, stepRunId, { error: storableText(err.message) });
     } catch (recordError) {
       if (!(recordError instanceof LeaseLostError)) throw recordError;
     }
