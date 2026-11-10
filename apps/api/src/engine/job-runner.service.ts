@@ -118,13 +118,15 @@ export class JobRunnerService implements BeforeApplicationShutdown {
   async process(job: Job, signal?: AbortSignal): Promise<void> {
     const inTenant = <T>(work: (em: EntityManager) => Promise<T>) => this.db.run(job.tenantId, work);
 
-    const execution = await inTenant((em) => em.findOneOrFail(Execution, { where: { id: job.executionId } }));
-    const workflow = await inTenant((em) => em.findOneOrFail(Workflow, { where: { id: execution.workflowId } }));
-
-    await inTenant((em) => em.update(Execution, execution.id, { status: 'running' }));
-    const ctx: StepContext = { input: execution.input, steps: {} };
-
     try {
+      const execution = await inTenant((em) => em.findOne(Execution, { where: { id: job.executionId } }));
+      if (!execution) throw new StepError('the execution of this job no longer exists', false);
+      const workflow = await inTenant((em) => em.findOne(Workflow, { where: { id: execution.workflowId } }));
+      if (!workflow) throw new StepError('the workflow of this execution was deleted', false);
+
+      await inTenant((em) => em.update(Execution, execution.id, { status: 'running' }));
+      const ctx: StepContext = { input: execution.input, steps: {} };
+
       for (let i = 0; i < workflow.steps.length; i++) {
         const step = workflow.steps[i];
         signal?.throwIfAborted();

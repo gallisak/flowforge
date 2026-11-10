@@ -270,6 +270,31 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   limit (a hanging step would block the deploy until the orchestrator kills the process anyway);
   counting the interrupted attempt (a job could go `dead` purely because of frequent deploys).
 
+### F-06 · A job whose workflow was deleted hangs forever · Queue poison jobs · High
+
+- **What:** `apps/api/src/engine/job-runner.service.ts:53-54` loads the execution and the workflow with
+  `findOneOrFail` before the `try` block that handles job failures. `DELETE /workflows/:id`
+  (`apps/api/src/workflows/workflows.service.ts:55-58`) removes a workflow even when executions of it
+  are still queued.
+- **Why it is dangerous:** deleting a workflow right after starting it is a normal user action, but the
+  worker loop catches the exception as a generic "loop error": the job is neither failed nor retried,
+  it stays `running`, and the execution stays `pending` forever. After F-04 the job would only be
+  reclaimed and crash again until it went `dead`, burning attempts and worker time without any useful
+  error for the user.
+- **How to reproduce:** `apps/api/test/integration/findings/F-06-poison-job.int-spec.ts` runs a workflow
+  through the API, deletes it, starts a worker and expects a failed execution that mentions the
+  workflow. On the starter code the execution stays `pending` and the job `running`.
+  `scripts/prove-finding.sh F-06`.
+- **How it was fixed:** the whole processing, including loading the execution and the workflow, is
+  inside the failure handling. A missing execution or workflow is a non-retryable error with a clear
+  message, so the job is failed once and the execution is marked `failed` with that message; any other
+  unexpected error (for example a database outage) is treated as retryable.
+- **Alternatives considered:** forbidding deletion while executions are pending (surprising for users
+  and still leaves the worker fragile against any other missing row); a foreign key with
+  `ON DELETE CASCADE` (silently deletes execution history). Executions will work from a snapshot of the
+  workflow version taken at start (durable execution phase), so deleting a workflow will no longer
+  affect executions that already started.
+
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 
 - **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a
