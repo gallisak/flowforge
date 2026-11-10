@@ -245,6 +245,31 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   invisible in the table); a very long lease without heartbeat (slow recovery and still unsafe for
   long steps).
 
+### F-05 · A stopping worker abandons its current job · Worker crash behaviour · High
+
+- **What:** `apps/api/src/engine/job-runner.service.ts:32-34`. On `SIGTERM` the worker only sets
+  `running = false`. Nest then closes the TypeORM connection in the same shutdown sequence and exits,
+  while the job that was being processed is still in the middle of a step: it can neither record its
+  result nor give the job back.
+- **Why it is dangerous:** every deploy, scale-down or `docker stop` leaves the jobs that were running
+  at that moment stuck in `running` (permanently before F-04, for a whole lease after it), executions
+  hang, and a job that had almost finished is redone later from scratch.
+- **How to reproduce:** `apps/api/test/integration/findings/F-05-graceful-shutdown.int-spec.ts` runs a
+  real worker process, sends `SIGTERM` in the middle of a step that finishes in 1.5 s and in the middle
+  of a step that never finishes. On the starter code both jobs stay `running`.
+  `scripts/prove-finding.sh F-05`.
+- **How it was fixed:** `JobRunnerService.beforeApplicationShutdown` (runs before Nest closes the
+  database connection) stops claiming and the reaper, waits up to `WORKER_SHUTDOWN_GRACE_MS` (25 s by
+  default; compose gives the container 30 s before `SIGKILL`) for the running jobs, then aborts the
+  remaining ones through their `AbortSignal` and releases them: back to `queued`, lease cleared,
+  execution back to `pending`, and the attempt is not counted because the job did nothing wrong.
+  Release is fenced like completion, and a job claimed while shutdown already started is released at
+  once.
+- **Alternatives considered:** exiting immediately and relying on lease expiry (correct after F-04, but
+  every deploy delays affected executions by a full lease and costs an attempt); waiting without a
+  limit (a hanging step would block the deploy until the orchestrator kills the process anyway);
+  counting the interrupted attempt (a job could go `dead` purely because of frequent deploys).
+
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 
 - **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a

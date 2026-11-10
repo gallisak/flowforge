@@ -19,8 +19,6 @@ export async function startInProcessWorkers(count: number, concurrency = 1): Pro
   return {
     ids: contexts.map((c) => c.get(JobRunnerService).workerId),
     async stop() {
-      for (const c of contexts) c.get(JobRunnerService).onApplicationShutdown();
-      await new Promise((r) => setTimeout(r, 400));
       await Promise.all(contexts.map((c) => c.close()));
     },
   };

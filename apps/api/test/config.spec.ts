@@ -101,6 +101,7 @@ describe('loadWorkerConfig', () => {
       workerConcurrency: 4,
       leaseSeconds: 30,
       reaperIntervalMs: 5_000,
+      shutdownGraceMs: 25_000,
     });
   });
 

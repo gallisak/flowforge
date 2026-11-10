@@ -64,6 +64,21 @@ export class JobQueueService {
     });
   }
 
+  release(job: Job, workerId: string): Promise<boolean> {
+    return this.db.run(job.tenantId, async (em) => {
+      const result = await em.update(Job, this.ownedBy(job, workerId), {
+        status: 'queued',
+        lockedBy: null,
+        lockedUntil: null,
+        attempts: () => '"attempts" - 1',
+        runAt: () => 'now()',
+      });
+      if (result.affected !== 1) return false;
+      await em.update(Execution, job.executionId, { status: 'pending' });
+      return true;
+    });
+  }
+
   async reapExpired(): Promise<ReapedJob[]> {
     const reaped = await this.db.reapExpiredJobs();
     for (const job of reaped.filter((r) => r.status === 'dead')) {

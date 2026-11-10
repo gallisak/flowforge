@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { BeforeApplicationShutdown, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
@@ -16,12 +16,20 @@ export class LeaseLostError extends Error {
   }
 }
 
+export class WorkerShutdownError extends Error {
+  constructor() {
+    super('interrupted because the worker is shutting down');
+  }
+}
+
 @Injectable()
-export class JobRunnerService implements OnApplicationShutdown {
+export class JobRunnerService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(JobRunnerService.name);
   readonly workerId = `worker-${randomUUID().slice(0, 8)}`;
   private running = false;
   private reaperTimer?: NodeJS.Timeout;
+  private loops: Promise<void>[] = [];
+  private readonly inFlight = new Map<string, AbortController>();
 
   constructor(
     private readonly queue: JobQueueService,
@@ -34,12 +42,26 @@ export class JobRunnerService implements OnApplicationShutdown {
     this.running = true;
     this.logger.log(`${this.workerId} started, concurrency=${concurrency}`);
     this.scheduleReaper();
-    for (let i = 0; i < concurrency; i++) void this.loop();
+    this.loops = Array.from({ length: concurrency }, () => this.loop());
   }
 
-  onApplicationShutdown(): void {
+  async beforeApplicationShutdown(): Promise<void> {
+    if (!this.running) return;
     this.running = false;
     if (this.reaperTimer) clearTimeout(this.reaperTimer);
+    const allLoops = Promise.allSettled(this.loops);
+    let graceTimer: NodeJS.Timeout | undefined;
+    const graceOver = new Promise<'timeout'>((resolve) => {
+      graceTimer = setTimeout(() => resolve('timeout'), this.config.shutdownGraceMs);
+    });
+    const outcome = await Promise.race([allLoops.then(() => 'drained' as const), graceOver]);
+    clearTimeout(graceTimer);
+    if (outcome === 'timeout') {
+      this.logger.warn(`returning ${this.inFlight.size} unfinished job(s) to the queue`);
+      for (const controller of this.inFlight.values()) controller.abort(new WorkerShutdownError());
+      await allLoops;
+    }
+    this.logger.log(`${this.workerId} stopped`);
   }
 
   private scheduleReaper(): void {
@@ -62,6 +84,10 @@ export class JobRunnerService implements OnApplicationShutdown {
           await sleep(250);
           continue;
         }
+        if (!this.running) {
+          await this.queue.release(job, this.workerId);
+          return;
+        }
         await this.processWithLease(job);
       } catch (err) {
         this.logger.error(`loop error: ${(err as Error).message}`);
@@ -72,6 +98,7 @@ export class JobRunnerService implements OnApplicationShutdown {
 
   private async processWithLease(job: Job): Promise<void> {
     const lease = new AbortController();
+    this.inFlight.set(job.id, lease);
     const heartbeat = setInterval(() => {
       this.queue
         .extendLease(job, this.workerId, this.config.leaseSeconds)
@@ -84,6 +111,7 @@ export class JobRunnerService implements OnApplicationShutdown {
       await this.process(job, lease.signal);
     } finally {
       clearInterval(heartbeat);
+      this.inFlight.delete(job.id);
     }
   }
 
@@ -99,6 +127,7 @@ export class JobRunnerService implements OnApplicationShutdown {
     try {
       for (let i = 0; i < workflow.steps.length; i++) {
         const step = workflow.steps[i];
+        signal?.throwIfAborted();
         const run = await inTenant((em) =>
           em.save(em.create(StepRun, { tenantId: job.tenantId, executionId: execution.id, stepIndex: i, stepId: step.id })),
         );
@@ -121,6 +150,10 @@ export class JobRunnerService implements OnApplicationShutdown {
     } catch (err) {
       if (signal?.aborted && signal.reason instanceof LeaseLostError) {
         this.logger.warn(signal.reason.message);
+        return;
+      }
+      if (signal?.aborted && signal.reason instanceof WorkerShutdownError) {
+        await this.queue.release(job, this.workerId);
         return;
       }
       const retryable = err instanceof StepError ? err.retryable : true;

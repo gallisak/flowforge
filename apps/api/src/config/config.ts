@@ -16,6 +16,7 @@ export interface WorkerConfig {
   workerConcurrency: number;
   leaseSeconds: number;
   reaperIntervalMs: number;
+  shutdownGraceMs: number;
 }
 
 export interface MigrationConfig {
@@ -121,6 +122,7 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     workerConcurrency: read.integer('WORKER_CONCURRENCY', 4, 1, 64),
     leaseSeconds: read.integer('WORKER_LEASE_SECONDS', 30, 2, 3_600),
     reaperIntervalMs: read.integer('WORKER_REAPER_INTERVAL_MS', 5_000, 100, 600_000),
+    shutdownGraceMs: read.integer('WORKER_SHUTDOWN_GRACE_MS', 25_000, 0, 600_000),
   });
 }
 
