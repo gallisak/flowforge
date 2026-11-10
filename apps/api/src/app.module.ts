@@ -12,6 +12,8 @@ import { ExecutionsController } from './executions/executions.controller';
 import { ExecutionsService } from './executions/executions.service';
 import { SchedulerService } from './scheduler/scheduler.service';
 import { TenantsController } from './tenants/tenants.controller';
+import { WebhookSecretsController } from './webhooks/webhook-secrets.controller';
+import { WebhookSecretsService } from './webhooks/webhook-secrets.service';
 import { WebhooksController } from './webhooks/webhooks.controller';
 import { WorkflowsController } from './workflows/workflows.controller';
 import { WorkflowsService } from './workflows/workflows.service';
@@ -25,8 +27,8 @@ import { WorkflowsService } from './workflows/workflows.service';
     }),
     TypeOrmModule.forFeature(entities),
   ],
-  controllers: [TenantsController, WorkflowsController, ExecutionsController, WebhooksController],
-  providers: [TenantDb, ApiKeyGuard, WorkflowsService, ExecutionsService, SchedulerService],
+  controllers: [TenantsController, WorkflowsController, ExecutionsController, WebhooksController, WebhookSecretsController],
+  providers: [TenantDb, ApiKeyGuard, WorkflowsService, ExecutionsService, SchedulerService, WebhookSecretsService],
 })
 export class AppModule {}
 

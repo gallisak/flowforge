@@ -10,8 +10,14 @@ const MESSAGE_ID = /^[\x21-\x7e]{1,256}$/;
 const TIMESTAMP = /^\d{1,12}$/;
 const SHA256_BYTES = 32;
 
+const SECRET_PREFIX = 'whsec_';
+
+export function webhookKey(secret: string): Buffer {
+  return secret.startsWith(SECRET_PREFIX) ? Buffer.from(secret.slice(SECRET_PREFIX.length), 'base64') : Buffer.from(secret, 'utf8');
+}
+
 export function webhookSignature(secret: string, id: string, timestamp: string, payload: Buffer): Buffer {
-  return createHmac('sha256', secret).update(`${id}.${timestamp}.`).update(payload).digest();
+  return createHmac('sha256', webhookKey(secret)).update(`${id}.${timestamp}.`).update(payload).digest();
 }
 
 function decodeSignature(entry: string): Buffer | undefined {

@@ -31,6 +31,7 @@ export interface WebhookDelivery {
 export function signWebhook(secret: string, body: string, delivery: WebhookDelivery = {}): Record<string, string> {
   const id = delivery.id ?? `msg_${randomUUID()}`;
   const timestamp = String(delivery.timestamp ?? Math.floor(Date.now() / 1000));
-  const signature = createHmac('sha256', secret).update(`${id}.${timestamp}.${body}`).digest('base64');
+  const key = secret.startsWith('whsec_') ? Buffer.from(secret.slice('whsec_'.length), 'base64') : Buffer.from(secret);
+  const signature = createHmac('sha256', key).update(`${id}.${timestamp}.${body}`).digest('base64');
   return { 'webhook-id': id, 'webhook-timestamp': timestamp, 'webhook-signature': `v1,${signature}` };
 }

@@ -24,6 +24,7 @@ describe('loadApiConfig', () => {
       adminToken: 'dev-admin-token',
       schedulerTickMs: 30_000,
       webhookToleranceSeconds: 300,
+      webhookSecretGraceSeconds: 86_400,
     });
   });
 

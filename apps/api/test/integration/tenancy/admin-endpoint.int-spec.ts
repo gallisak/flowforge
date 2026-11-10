@@ -47,7 +47,7 @@ describe('tenant creation endpoint', () => {
       id: expect.any(String),
       name: 'n'.repeat(200),
       apiKey: expect.stringMatching(/^ff_[0-9a-f]{48}$/),
-      webhookSecret: expect.stringMatching(/^[0-9a-f]{48}$/),
+      webhookSecret: expect.stringMatching(/^whsec_[A-Za-z0-9+/]{43}=$/),
     });
     const stored = await ctx.ds.getRepository(Tenant).findOneByOrFail({ id: res.body.id });
     expect(stored.apiKeyHash).not.toBe(res.body.apiKey);

@@ -15,15 +15,17 @@ import { Request } from 'express';
 import { RawBodyRequest } from '../app.setup';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
-import { Tenant, Workflow } from '../entities';
+import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
 import { verifyWebhook } from './signature';
+import { WebhookSecretsService } from './webhook-secrets.service';
 
 @Controller('hooks')
 export class WebhooksController {
   constructor(
     private readonly db: TenantDb,
     private readonly executions: ExecutionsService,
+    private readonly secrets: WebhookSecretsService,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
@@ -42,14 +44,20 @@ export class WebhooksController {
     const rejected = new UnauthorizedException('Invalid signature');
     const tenantId = await this.db.resolveWebhookTenant(workflowId);
     if (!tenantId) throw rejected;
-    const { workflow, tenant } = await this.db.run(tenantId, async (em) => ({
+    const { workflow, secrets } = await this.db.run(tenantId, async (em) => ({
       workflow: await em.findOne(Workflow, { where: { id: workflowId } }),
-      tenant: await em.findOne(Tenant, { where: { id: tenantId } }),
+      secrets: await this.secrets.activeSecrets(em, tenantId),
     }));
-    if (!workflow || !workflow.enabled || !tenant) throw rejected;
+    if (!workflow || !workflow.enabled) throw rejected;
 
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const messageId = verifyWebhook([tenant.webhookSecret], { id, timestamp, signature }, req.rawBody, nowSeconds, this.config.webhookToleranceSeconds);
+    const messageId = verifyWebhook(
+      secrets.map((s) => s.secret),
+      { id, timestamp, signature },
+      req.rawBody,
+      nowSeconds,
+      this.config.webhookToleranceSeconds,
+    );
     if (!messageId) throw rejected;
 
     const execution = await this.executions.enqueue(

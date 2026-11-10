@@ -12,6 +12,7 @@ export interface ApiConfig {
   adminToken: string;
   schedulerTickMs: number;
   webhookToleranceSeconds: number;
+  webhookSecretGraceSeconds: number;
 }
 
 export interface WorkerConfig {
@@ -145,6 +146,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     adminToken: read.adminToken(nodeEnv),
     schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 30_000, 1_000, 3_600_000),
     webhookToleranceSeconds: read.integer('WEBHOOK_TOLERANCE_SECONDS', 300, 10, 3_600),
+    webhookSecretGraceSeconds: read.integer('WEBHOOK_SECRET_GRACE_SECONDS', 86_400, 0, 2_592_000),
   });
 }
 
