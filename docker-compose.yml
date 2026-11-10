@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flowforge
+      POSTGRES_PASSWORD: flowforge
+      POSTGRES_DB: flowforge
+    ports: ['5432:5432']
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U flowforge']
+      interval: 3s
+      retries: 20
+
+  api:
+    build: ./apps/api
+    env_file: ./apps/api/.env.example
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ['3000:3000']
+
+  worker:
+    build: ./apps/api
+    command: ['node', 'dist/worker']
+    env_file: ./apps/api/.env.example
+    depends_on:
+      postgres: { condition: service_healthy }
+    deploy:
+      replicas: 2
+
+  frontend:
+    build: ./apps/frontend
+    environment:
+      API_URL: http://api:3000
+    depends_on: [api]
+    ports: ['3001:3000']
+
+volumes:
+  pgdata:
