@@ -5,7 +5,7 @@ import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Workflow, WorkflowVersion } from '../entities';
 import { JobQueueService, LeaseLostError } from './job-queue.service';
-import { StepError, StepExecutor } from './step-executor';
+import { StepError, StepExecutor, stepIdempotencyKey } from './step-executor';
 import { StepContext } from './template';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -156,10 +156,11 @@ export class JobRunnerService implements BeforeApplicationShutdown {
           if (!waiting.has(i)) await this.queue.sleep(job, this.workerId, i, step.id, step.ms);
           return;
         }
-        const stepRunId = await this.queue.startStep(job, this.workerId, i, step.id);
+        const idempotencyKey = step.type === 'http' ? stepIdempotencyKey(execution.id, step.id) : null;
+        const stepRunId = await this.queue.startStep(job, this.workerId, i, step.id, idempotencyKey);
         let output: unknown;
         try {
-          output = await this.executor.execute(step, ctx, signal);
+          output = await this.executor.execute(step, ctx, { signal, idempotencyKey: idempotencyKey ?? undefined });
         } catch (err) {
           await this.recordStepFailure(job, stepRunId, err as Error);
           throw err;

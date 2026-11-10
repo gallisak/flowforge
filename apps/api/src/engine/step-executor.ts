@@ -14,11 +14,22 @@ export function isRetryableStatus(status: number): boolean {
   return status >= 500 || RETRYABLE_CLIENT_STATUSES.has(status);
 }
 
+export interface StepRuntime {
+  signal?: AbortSignal;
+  idempotencyKey?: string;
+}
+
+export function stepIdempotencyKey(executionId: string, stepId: string): string {
+  return `${executionId}:${stepId}`;
+}
+
+const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+
 @Injectable()
 export class StepExecutor {
   private readonly logger = new Logger(StepExecutor.name);
 
-  async execute(step: StepDefinition, ctx: StepContext, signal?: AbortSignal): Promise<unknown> {
+  async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
     switch (step.type) {
       case 'log':
         this.logger.log(renderTemplate(step.message, ctx));
@@ -28,7 +39,7 @@ export class StepExecutor {
       case 'transform':
         return this.transform(step.expr, ctx);
       case 'http':
-        return this.http(step, ctx, signal);
+        return this.http(step, ctx, runtime);
     }
   }
 
@@ -41,14 +52,19 @@ export class StepExecutor {
     }
   }
 
-  private async http(step: Extract<StepDefinition, { type: 'http' }>, ctx: StepContext, signal?: AbortSignal): Promise<unknown> {
+  private async http(step: Extract<StepDefinition, { type: 'http' }>, ctx: StepContext, runtime: StepRuntime): Promise<unknown> {
+    const { signal, idempotencyKey } = runtime;
+    const headers = Object.fromEntries(
+      Object.entries(step.headers ?? {}).filter(([name]) => name.toLowerCase() !== IDEMPOTENCY_HEADER.toLowerCase()),
+    );
+    if (idempotencyKey) headers[IDEMPOTENCY_HEADER] = idempotencyKey;
     const url = renderTemplate(step.url, ctx);
     let res: Response;
     let text: string;
     try {
       res = await fetch(url, {
         method: step.method ?? 'GET',
-        headers: step.headers,
+        headers,
         body: step.body !== undefined ? renderTemplate(step.body, ctx) : undefined,
         signal: signal ? AbortSignal.any([AbortSignal.timeout(15_000), signal]) : AbortSignal.timeout(15_000),
       });

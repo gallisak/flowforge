@@ -102,16 +102,16 @@ export class JobQueueService {
     });
   }
 
-  startStep(job: Job, workerId: string, stepIndex: number, stepId: string): Promise<string> {
+  startStep(job: Job, workerId: string, stepIndex: number, stepId: string, idempotencyKey: string | null): Promise<string> {
     return this.withOwnership(job, workerId, async (em) => {
       const [row]: Array<{ id: string }> = await em.query(
-        `INSERT INTO step_runs ("tenantId", "executionId", "stepIndex", "stepId", "status", "attempts", "startedAt")
-         VALUES ($1, $2, $3, $4, 'running', 1, now())
+        `INSERT INTO step_runs ("tenantId", "executionId", "stepIndex", "stepId", "status", "attempts", "startedAt", "idempotencyKey")
+         VALUES ($1, $2, $3, $4, 'running', 1, now(), $5)
          ON CONFLICT ("executionId", "stepIndex") DO UPDATE
             SET "status" = 'running', "attempts" = step_runs."attempts" + 1, "startedAt" = now(),
                 "error" = NULL, "finishedAt" = NULL
          RETURNING id`,
-        [job.tenantId, job.executionId, stepIndex, stepId],
+        [job.tenantId, job.executionId, stepIndex, stepId, idempotencyKey],
       );
       return row.id;
     });

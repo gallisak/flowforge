@@ -181,9 +181,52 @@ The queue is the `jobs` table. One job drives one execution.
 | `LISTEN/NOTIFY` as the queue | Not durable; useful only as a wake-up signal. |
 | Redis / RabbitMQ | Out of scope by the task: the queue must live in Postgres. |
 
-Limitations at this point: a retry still re-runs the workflow from the first step and steps are not
-idempotent yet (addressed by durable execution); claim order is global FIFO by `runAt` (per-tenant
-fairness comes with tenant limits); idle workers poll every 250 ms.
+Limitations: claim order is global FIFO by `runAt` (per-tenant fairness comes with tenant limits);
+idle workers poll every 250 ms.
+
+## Durable execution
+
+- **Version snapshot** — every change of a workflow's steps writes an immutable row to
+  `workflow_versions`; an execution records the version current when it was enqueued and the worker
+  reads the steps only from that snapshot. Editing a workflow never changes executions that already
+  exist; deleting it cancels the unfinished ones.
+- **Checkpoints** — each step has exactly one `step_runs` row (unique `(executionId, stepIndex)`) with
+  its status, output, error, number of attempts and timestamps. On every attempt the worker rebuilds
+  `ctx.steps` from the outputs of succeeded steps and continues at the first step without a successful
+  checkpoint; a finished step is never recomputed.
+- **Fencing** — starting a step, recording its result and recording its failure each run in one
+  transaction that first locks the job row and checks that this worker still owns it (`lockedBy` and
+  `attempts`). Completing the execution updates the job and the execution together.
+- **Idempotency keys** — every request of an `http` step carries `Idempotency-Key:
+  <executionId>:<stepId>`, identical for all attempts of that step in that execution and different for
+  any other step or execution; a key set by the tenant on the step is replaced. The key is stored on the
+  checkpoint.
+- **Durable timers** — a `delay` step stores `wakeAt` on its checkpoint, sets the execution to
+  `waiting` and returns the job to the queue with `runAt = wakeAt` without counting an attempt, so it
+  occupies no worker slot. The step completes on the first claim after `wakeAt` by the database clock.
+
+### Guarantees
+
+| Unit | Guarantee | Conditions and windows |
+|---|---|---|
+| `transform`, `log` step | Executed at least once; its recorded result is final once committed | A worker that dies or loses its lease after computing but before committing the checkpoint causes one more execution (a log line may appear twice). |
+| `http` step | Delivered at least once; **effectively once** for receivers that deduplicate by `Idempotency-Key` | A second delivery happens when the worker dies, loses its lease or times out after the request left and before the checkpoint was committed. Every delivery of the step carries the same key. |
+| `delay` step | Wakes up no earlier than `wakeAt`, exactly once | Late by the claim interval (≤ 250 ms when a worker is idle) plus queue wait. Survives restarts and crashes. |
+| Execution | Uses one workflow version; reaches `succeeded` or `failed` at most once; every step result is committed at most once | Requires at least one running worker. `failed` after a non-retryable error, after `maxAttempts` retryable failures, or when its workflow is deleted. |
+| Job | Owned by at most one worker at a time | Ownership lasts `WORKER_LEASE_SECONDS` and is renewed by heartbeat; an expired lease is reclaimed by the reaper. |
+
+The chaos test `apps/api/test/integration/chaos/worker-killed-mid-step.int-spec.ts` demonstrates the
+table: a worker process is killed with `SIGKILL` while the receiver holds the second of three HTTP
+steps; another worker reclaims the job after the lease expires, does not repeat the first step,
+repeats the interrupted step with the same key, and a receiver that honours the key applies each of
+the three effects once.
+
+| Decision | Options considered | Chosen |
+|---|---|---|
+| Version snapshot | copy steps into each execution; forbid edits while running; **versions table** | Versions table: one copy per version, full history, cheap reference from executions. |
+| Checkpoints | append-only attempt log; results in the job row; event sourcing; **one row per step** | One row per step with an attempt counter: the current state is a single lookup and the history needed for debugging is kept. |
+| Idempotency key | random per attempt (useless for dedupe); hash of the request body (changes when templates render differently); **execution + step id** | Stable, readable, unique per step and execution. |
+| Timers | in-memory sleep; `pg_sleep`; separate timers table; **queue `runAt`** | The queue already is a durable timer. |
 
 ## Tests
 

@@ -26,6 +26,9 @@ export class StepRun {
   @Column({ type: 'int', default: 0 })
   attempts: number;
 
+  @Column({ type: 'varchar', nullable: true })
+  idempotencyKey: string | null;
+
   @Column({ type: 'jsonb', nullable: true })
   output: unknown;
 
