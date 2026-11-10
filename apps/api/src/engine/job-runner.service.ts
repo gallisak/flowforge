@@ -4,17 +4,11 @@ import { EntityManager } from 'typeorm';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Workflow, WorkflowVersion } from '../entities';
-import { JobQueueService } from './job-queue.service';
+import { JobQueueService, LeaseLostError } from './job-queue.service';
 import { StepError, StepExecutor } from './step-executor';
 import { StepContext } from './template';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-export class LeaseLostError extends Error {
-  constructor(jobId: string) {
-    super(`lease on job ${jobId} was lost`);
-  }
-}
 
 export class WorkerShutdownError extends Error {
   constructor() {
@@ -138,23 +132,30 @@ export class JobRunnerService implements BeforeApplicationShutdown {
       if (!snapshot) throw new StepError(`version ${execution.workflowVersion} of the workflow is missing`, false);
       const steps = snapshot.steps;
 
+      const checkpoints = await inTenant((em) => em.find(StepRun, { where: { executionId: execution.id } }));
+      const succeeded = new Map(checkpoints.filter((r) => r.status === 'succeeded').map((r) => [r.stepIndex, r]));
+
       await inTenant((em) => em.update(Execution, execution.id, { status: 'running' }));
       const ctx: StepContext = { input: execution.input, steps: {} };
+      steps.forEach((step, i) => {
+        const checkpoint = succeeded.get(i);
+        if (checkpoint) ctx.steps[step.id] = checkpoint.output;
+      });
 
       for (let i = 0; i < steps.length; i++) {
+        if (succeeded.has(i)) continue;
         const step = steps[i];
         signal?.throwIfAborted();
-        const run = await inTenant((em) =>
-          em.save(em.create(StepRun, { tenantId: job.tenantId, executionId: execution.id, stepIndex: i, stepId: step.id })),
-        );
+        const stepRunId = await this.queue.startStep(job, this.workerId, i, step.id);
+        let output: unknown;
         try {
-          const output = await this.executor.execute(step, ctx, signal);
-          ctx.steps[step.id] = output;
-          await inTenant((em) => em.update(StepRun, run.id, { status: 'succeeded', output: output as object }));
+          output = await this.executor.execute(step, ctx, signal);
         } catch (err) {
-          await inTenant((em) => em.update(StepRun, run.id, { status: 'failed', error: (err as Error).message }));
+          await this.recordStepFailure(job, stepRunId, err as Error);
           throw err;
         }
+        await this.queue.finishStep(job, this.workerId, stepRunId, { output });
+        ctx.steps[step.id] = output;
       }
       const last = steps[steps.length - 1];
       const completed = await this.queue.complete(job, this.workerId, {
@@ -164,8 +165,9 @@ export class JobRunnerService implements BeforeApplicationShutdown {
       });
       if (!completed) this.logger.warn(`job ${job.id} finished after its lease was lost; result discarded`);
     } catch (err) {
-      if (signal?.aborted && signal.reason instanceof LeaseLostError) {
-        this.logger.warn(signal.reason.message);
+      const leaseLost = err instanceof LeaseLostError ? err : signal?.reason instanceof LeaseLostError ? signal.reason : null;
+      if (leaseLost) {
+        this.logger.warn(leaseLost.message);
         return;
       }
       if (signal?.aborted && signal.reason instanceof WorkerShutdownError) {
@@ -177,6 +179,14 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         baseMs: this.config.retryBaseMs,
         capMs: this.config.retryCapMs,
       });
+    }
+  }
+
+  private async recordStepFailure(job: Job, stepRunId: string, err: Error): Promise<void> {
+    try {
+      await this.queue.finishStep(job, this.workerId, stepRunId, { error: err.message });
+    } catch (recordError) {
+      if (!(recordError instanceof LeaseLostError)) throw recordError;
     }
   }
 }

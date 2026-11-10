@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { ReapedJob, TenantDb } from '../db/tenant-db.service';
-import { Execution, Job } from '../entities';
+import { EntityManager } from 'typeorm';
+import { Execution, Job, StepRun } from '../entities';
 
 export interface RetryPolicy {
   baseMs: number;
@@ -20,6 +21,12 @@ export function retryDelayMs(attempt: number, policy: RetryPolicy, random: () =>
 
 export function backoffMs(attempt: number): number {
   return retryCeilingMs(attempt, { baseMs: 1000, capMs: Number.POSITIVE_INFINITY });
+}
+
+export class LeaseLostError extends Error {
+  constructor(jobId: string) {
+    super(`lease on job ${jobId} was lost`);
+  }
 }
 
 export type ExecutionUpdate = QueryDeepPartialEntity<Execution>;
@@ -67,6 +74,9 @@ export class JobQueueService {
           : { ...released, status: outcome },
       );
       if (result.affected !== 1) return 'lost';
+      if (outcome === 'retry') {
+        await em.update(Execution, job.executionId, { status: 'pending', error });
+      }
       if (outcome === 'failed') {
         await em.update(Execution, job.executionId, { status: 'failed', error, finishedAt: new Date() });
       }
@@ -78,6 +88,44 @@ export class JobQueueService {
         });
       }
       return outcome;
+    });
+  }
+
+  withOwnership<T>(job: Job, workerId: string, work: (em: EntityManager) => Promise<T>): Promise<T> {
+    return this.db.run(job.tenantId, async (em) => {
+      const owned: unknown[] = await em.query(
+        `SELECT 1 FROM jobs WHERE id = $1 AND "lockedBy" = $2 AND attempts = $3 AND status = 'running' FOR UPDATE`,
+        [job.id, workerId, job.attempts],
+      );
+      if (owned.length !== 1) throw new LeaseLostError(job.id);
+      return work(em);
+    });
+  }
+
+  startStep(job: Job, workerId: string, stepIndex: number, stepId: string): Promise<string> {
+    return this.withOwnership(job, workerId, async (em) => {
+      const [row]: Array<{ id: string }> = await em.query(
+        `INSERT INTO step_runs ("tenantId", "executionId", "stepIndex", "stepId", "status", "attempts", "startedAt")
+         VALUES ($1, $2, $3, $4, 'running', 1, now())
+         ON CONFLICT ("executionId", "stepIndex") DO UPDATE
+            SET "status" = 'running', "attempts" = step_runs."attempts" + 1, "startedAt" = now(),
+                "error" = NULL, "finishedAt" = NULL
+         RETURNING id`,
+        [job.tenantId, job.executionId, stepIndex, stepId],
+      );
+      return row.id;
+    });
+  }
+
+  finishStep(job: Job, workerId: string, stepRunId: string, result: { output: unknown } | { error: string }): Promise<void> {
+    return this.withOwnership(job, workerId, async (em) => {
+      await em.update(
+        StepRun,
+        stepRunId,
+        'error' in result
+          ? { status: 'failed', error: result.error, finishedAt: () => 'now()' }
+          : { status: 'succeeded', output: result.output as object, error: null, finishedAt: () => 'now()' },
+      );
     });
   }
 

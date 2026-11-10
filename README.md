@@ -358,6 +358,34 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   workflow version taken at start (durable execution phase), so deleting a workflow will no longer
   affect executions that already started.
 
+### F-18 · A retry repeats steps that already succeeded (includes F-21) · Execution properties · Critical
+
+- **What:** `apps/api/src/engine/job-runner.service.ts:60-73` runs the workflow from step 0 on every
+  attempt and inserts a new `step_runs` row each time; nothing reads earlier results back. The step
+  bookkeeping is also not atomic or owned (finding F-21 of the audit): a step row is created, the step
+  runs, and the row is updated in separate statements that any worker may write.
+- **Why it is dangerous:** one failing step at the end of a workflow repeats every side effect before
+  it on each retry: a payment step followed by a flaky notification charges the customer once per
+  retry. `step_runs` fills with duplicates and orphaned `running` rows, so the history does not say
+  which attempt produced the result.
+- **How to reproduce:** `apps/api/test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts`
+  runs `charge (POST) → notify (fails once) → log`. On the starter code the charge endpoint is called
+  twice and five step records exist for three steps. `scripts/prove-finding.sh F-18`.
+- **How it was fixed:**
+  - a step has exactly one checkpoint row: unique `(executionId, stepIndex)`, `attempts` counter,
+    `finishedAt` (the migration merges existing duplicates, keeping the successful or latest row);
+  - on every attempt the worker rebuilds `ctx.steps` from the stored outputs of succeeded steps and
+    starts at the first step without a successful checkpoint; a finished step is never recomputed;
+  - starting a step, recording its result and recording its failure each run in one transaction that
+    first locks the job row and checks `lockedBy`/`attempts` (fencing), so a worker that lost its lease
+    cannot overwrite the checkpoints of the new owner;
+  - while a job waits for a retry its execution is `pending` with the last error instead of `running`.
+  - Tests: `apps/api/test/integration/execution/checkpoints.int-spec.ts`.
+- **Alternatives considered:** an append-only log of step attempts (full history, but every reader has
+  to fold it to find the current state; the attempt count on the checkpoint is enough here); caching
+  results in the job row (one big JSON rewritten per step, no per-step status); event sourcing as in
+  Temporal (out of scope by the task).
+
 ### F-19 · A running execution picks up edits of its workflow · Execution properties · High
 
 - **What:** `apps/api/src/workflows/workflows.service.ts:45-48` increments `version` when the steps
