@@ -108,6 +108,8 @@ describe('loadWorkerConfig', () => {
       shutdownGraceMs: 25_000,
       retryBaseMs: 1_000,
       retryCapMs: 300_000,
+      transformTimeoutMs: 100,
+      transformMemoryMb: 32,
     });
   });
 

@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { StepDefinition } from '../entities';
+import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from './sandbox/transform-sandbox';
 import { renderTemplate, StepContext } from './template';
 
 export class StepError extends Error {
@@ -24,10 +26,27 @@ export function stepIdempotencyKey(executionId: string, stepId: string): string 
 }
 
 const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+const MAX_SANDBOX_THREADS = 4;
 
 @Injectable()
-export class StepExecutor {
+export class StepExecutor implements OnModuleDestroy {
   private readonly logger = new Logger(StepExecutor.name);
+  private readonly sandbox: TransformSandbox;
+
+  constructor(@Inject(WORKER_CONFIG) config: WorkerConfig) {
+    this.sandbox = new TransformSandbox(
+      {
+        timeoutMs: config.transformTimeoutMs,
+        memoryBytes: config.transformMemoryMb * 1024 * 1024,
+        stackBytes: SANDBOX_STACK_BYTES,
+      },
+      Math.min(config.workerConcurrency, MAX_SANDBOX_THREADS),
+    );
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.sandbox.close();
+  }
 
   async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
     switch (step.type) {
@@ -43,12 +62,12 @@ export class StepExecutor {
     }
   }
 
-  private transform(expr: string, ctx: StepContext): unknown {
+  private async transform(expr: string, ctx: StepContext): Promise<unknown> {
     try {
-      const fn = new Function('ctx', `return (${expr});`);
-      return fn(ctx);
+      return await this.sandbox.evaluate(expr, ctx);
     } catch (err) {
-      throw new StepError(`transform: ${(err as Error).message}`, false);
+      if (err instanceof TransformError) throw new StepError(err.message, err.retryable);
+      throw err;
     }
   }
 

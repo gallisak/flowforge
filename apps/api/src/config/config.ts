@@ -23,6 +23,8 @@ export interface WorkerConfig {
   shutdownGraceMs: number;
   retryBaseMs: number;
   retryCapMs: number;
+  transformTimeoutMs: number;
+  transformMemoryMb: number;
 }
 
 export interface MigrationConfig {
@@ -143,6 +145,8 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     shutdownGraceMs: read.integer('WORKER_SHUTDOWN_GRACE_MS', 25_000, 0, 600_000),
     retryBaseMs,
     retryCapMs,
+    transformTimeoutMs: read.integer('TRANSFORM_TIMEOUT_MS', 100, 10, 10_000),
+    transformMemoryMb: read.integer('TRANSFORM_MEMORY_MB', 32, 4, 512),
   });
 }
 
