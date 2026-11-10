@@ -32,7 +32,7 @@ fi
 
 if grep -qE '^Tests:.*[0-9]+ failed' "$TMP/jest.log"; then
   echo "✔ KILLED: the test suite detects the mutant"
-  grep -E '✕' "$TMP/jest.log" || true
+  grep -E '^  ● ' "$TMP/jest.log" | sort -u || true
   exit 0
 fi
 
