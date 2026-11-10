@@ -38,9 +38,11 @@ export class WebhooksController {
     @Headers('webhook-timestamp') timestamp?: string,
     @Headers('webhook-signature') signature?: string,
   ) {
-    if (!req.is('application/json') || !req.rawBody) throw new UnsupportedMediaTypeException('Webhook body must be application/json');
+    if (!req.is('application/json')) throw new UnsupportedMediaTypeException('Webhook body must be application/json');
     const body: unknown = req.body;
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new BadRequestException('Webhook body must be a JSON object');
+    if (!req.rawBody?.length || typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new BadRequestException('Webhook body must be a JSON object');
+    }
     const rejected = new UnauthorizedException('Invalid signature');
     const tenantId = await this.db.resolveWebhookTenant(workflowId);
     if (!tenantId) throw rejected;
