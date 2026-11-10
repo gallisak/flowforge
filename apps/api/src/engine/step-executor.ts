@@ -8,22 +8,37 @@ export class StepError extends Error {
   }
 }
 
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 @Injectable()
 export class StepExecutor {
   private readonly logger = new Logger(StepExecutor.name);
 
-  async execute(step: StepDefinition, ctx: StepContext): Promise<unknown> {
+  async execute(step: StepDefinition, ctx: StepContext, signal?: AbortSignal): Promise<unknown> {
     switch (step.type) {
       case 'log':
         this.logger.log(renderTemplate(step.message, ctx));
         return { logged: true };
       case 'delay':
-        await new Promise((resolve) => setTimeout(resolve, step.ms));
+        await abortableDelay(step.ms, signal);
         return { waitedMs: step.ms };
       case 'transform':
         return this.transform(step.expr, ctx);
       case 'http':
-        return this.http(step, ctx);
+        return this.http(step, ctx, signal);
     }
   }
 
@@ -36,13 +51,13 @@ export class StepExecutor {
     }
   }
 
-  private async http(step: Extract<StepDefinition, { type: 'http' }>, ctx: StepContext): Promise<unknown> {
+  private async http(step: Extract<StepDefinition, { type: 'http' }>, ctx: StepContext, signal?: AbortSignal): Promise<unknown> {
     const url = renderTemplate(step.url, ctx);
     const res = await fetch(url, {
       method: step.method ?? 'GET',
       headers: step.headers,
       body: step.body !== undefined ? renderTemplate(step.body, ctx) : undefined,
-      signal: AbortSignal.timeout(15_000),
+      signal: signal ? AbortSignal.any([AbortSignal.timeout(15_000), signal]) : AbortSignal.timeout(15_000),
     });
     const text = await res.text();
     if (!res.ok) {

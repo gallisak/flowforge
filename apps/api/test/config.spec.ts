@@ -99,7 +99,18 @@ describe('loadWorkerConfig', () => {
       nodeEnv: 'development',
       databaseUrl: DATABASE_URL,
       workerConcurrency: 4,
+      leaseSeconds: 30,
+      reaperIntervalMs: 5_000,
     });
+  });
+
+  it.each([
+    ['WORKER_LEASE_SECONDS', '1'],
+    ['WORKER_REAPER_INTERVAL_MS', '50'],
+  ])('rejects %s=%s', (name, value) => {
+    expect(problemsOf(() => loadWorkerConfig({ DATABASE_URL, [name]: value }))).toEqual([
+      expect.stringMatching(new RegExp(`^${name} must be an integer`)),
+    ]);
   });
 
   it.each(['0', '65', 'many'])('rejects WORKER_CONCURRENCY=%s', (value) => {

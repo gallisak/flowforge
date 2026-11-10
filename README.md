@@ -212,6 +212,39 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   (state lives outside the table and is lost silently when a session ends); `LISTEN/NOTIFY` as the
   queue (notifications are not durable). See the queue design notes for the full comparison.
 
+### F-04 · Jobs of a crashed worker are never recovered · Worker crash behaviour · Critical
+
+- **What:** a claimed job gets `status = 'running'` and a 60 second `lockedUntil`
+  (`apps/api/src/engine/job-queue.service.ts:6`), but nothing ever looks at `lockedUntil`: claiming
+  only considers `status = 'queued'` (`:19`), there is no reaper and no heartbeat, and
+  `apps/api/src/engine/job-runner.service.ts:52-92` never renews the lease. Writes at the end of a job
+  are not tied to the lease either.
+- **Why it is dangerous:** when a worker process dies (OOM, deploy, `SIGKILL`, node failure) every job
+  it held stays `running` forever and its execution never finishes. Adding a naive reaper alone would
+  be worse: a step that runs longer than the lease (a `delay`, a slow HTTP call) would be reclaimed
+  while still running and executed twice, and the first worker would still be able to mark it done.
+- **How to reproduce:** `apps/api/test/integration/findings/F-04-lease-recovery.int-spec.ts`
+  (the starter's `it.todo('re-queues a job whose worker died while holding the lease')`) seeds jobs
+  held by a worker that no longer exists, with an expired lease. On the starter code they stay
+  `running` forever. `scripts/prove-finding.sh F-04`.
+- **How it was fixed:**
+  - reaper: every worker runs `reap_expired_jobs()` every `WORKER_REAPER_INTERVAL_MS`; expired jobs go
+    back to `queued`, or to the new `dead` state when they already used all attempts (a job that kills
+    its worker every time cannot loop forever), and the execution of a dead job is marked `failed`;
+  - heartbeat: while a job runs, its worker extends `lockedUntil` every third of
+    `WORKER_LEASE_SECONDS`; if the extension fails the lease is gone, the running step is aborted
+    through an `AbortSignal` and its result is discarded;
+  - fencing: extending, completing and failing a job only succeed for the same `lockedBy` and
+    `attempts` that claimed it, and completion updates the job and the execution in one transaction.
+  - Tests: `apps/api/test/integration/queue/lease.int-spec.ts` (a step longer than the lease is not
+    taken over; a worker whose job was taken over cannot complete it).
+- **Alternatives considered:** reclaiming expired jobs inside `claim_job` instead of a separate reaper
+  (fewer moving parts, but dead jobs would need a second code path anyway and the reaper is easier to
+  observe); session-level advisory locks as the ownership marker (released automatically when the
+  connection dies, but a worker holds a connection per job for the whole step and ownership is
+  invisible in the table); a very long lease without heartbeat (slow recovery and still unsafe for
+  long steps).
+
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 
 - **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a
@@ -287,5 +320,6 @@ automatically in throwaway git worktrees. Line references point to the `initial 
 |---|---|---|
 | `apps/api/test/executions.service.spec.ts` | removed | F-02: the test could not fail; replaced by a real integration test |
 | `apps/api/test/job-queue.spec.ts` | removed `it.todo('claims each job exactly once when several workers poll concurrently')` | implemented as `test/integration/findings/F-03-exactly-once-claim.int-spec.ts` |
+| `apps/api/test/job-queue.spec.ts` | removed `it.todo('re-queues a job whose worker died while holding the lease')` | implemented as `test/integration/findings/F-04-lease-recovery.int-spec.ts` |
 
 All other starter tests are unchanged.

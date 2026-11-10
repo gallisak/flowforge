@@ -21,6 +21,14 @@ export interface ScheduledWorkflow {
   timezone: string;
 }
 
+export interface ReapedJob {
+  id: string;
+  tenantId: string;
+  executionId: string;
+  status: 'queued' | 'dead';
+  attempts: number;
+}
+
 @Injectable()
 export class TenantDb {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
@@ -50,6 +58,10 @@ export class TenantDb {
 
   listScheduledWorkflows(): Promise<ScheduledWorkflow[]> {
     return this.dataSource.query('SELECT * FROM list_scheduled_workflows()');
+  }
+
+  reapExpiredJobs(): Promise<ReapedJob[]> {
+    return this.dataSource.query('SELECT * FROM reap_expired_jobs()');
   }
 
   async claimJob(workerId: string, leaseSeconds: number): Promise<Job | null> {
