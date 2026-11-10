@@ -4,7 +4,6 @@ import {
   Headers,
   HttpCode,
   Inject,
-  NotFoundException,
   Param,
   ParseUUIDPipe,
   Post,
@@ -40,17 +39,18 @@ export class WebhooksController {
     if (!req.is('application/json') || !req.rawBody) throw new UnsupportedMediaTypeException('Webhook body must be application/json');
     const body: unknown = req.body;
     if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new BadRequestException('Webhook body must be a JSON object');
+    const rejected = new UnauthorizedException('Invalid signature');
     const tenantId = await this.db.resolveWebhookTenant(workflowId);
-    if (!tenantId) throw new NotFoundException();
+    if (!tenantId) throw rejected;
     const { workflow, tenant } = await this.db.run(tenantId, async (em) => ({
       workflow: await em.findOne(Workflow, { where: { id: workflowId } }),
       tenant: await em.findOne(Tenant, { where: { id: tenantId } }),
     }));
-    if (!workflow || !workflow.enabled || !tenant) throw new NotFoundException();
+    if (!workflow || !workflow.enabled || !tenant) throw rejected;
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const messageId = verifyWebhook([tenant.webhookSecret], { id, timestamp, signature }, req.rawBody, nowSeconds, this.config.webhookToleranceSeconds);
-    if (!messageId) throw new UnauthorizedException('Invalid signature');
+    if (!messageId) throw rejected;
 
     const execution = await this.executions.enqueue(
       workflow,
