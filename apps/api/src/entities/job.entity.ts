@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'dead';
 
 @Entity('jobs')
 @Index(['status', 'runAt'])

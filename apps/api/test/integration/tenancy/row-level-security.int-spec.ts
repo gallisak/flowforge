@@ -117,10 +117,14 @@ describe('row level security for the application role (queries that bypass the s
     expect(wrong.rows).toEqual([]);
   });
 
-  it('exposes only identifiers through the queue and webhook functions', async () => {
-    const job = await app.query('SELECT * FROM next_ready_job()');
-    expect(job.fields.map((field) => field.name)).toEqual(['id', 'tenantId']);
+  it('hands out a single claimed job through the queue function and nothing else', async () => {
+    const claimed = await app.query('SELECT * FROM claim_job($1, 30)', ['rls-probe']);
+    expect(claimed.rows).toHaveLength(1);
+    expect(claimed.rows[0]).toMatchObject({ status: 'running', lockedBy: 'rls-probe' });
+    expect(await count('jobs')).toBe(0);
+  });
 
+  it('exposes only the tenant id through the webhook function', async () => {
     const [workflowA] = await ctx.ds.query(`SELECT id FROM workflows WHERE "tenantId" = $1`, [tenantA.tenant.id]);
     const webhook = await app.query('SELECT resolve_webhook_tenant($1) AS "tenantId"', [workflowA.id]);
     expect(webhook.rows).toEqual([{ tenantId: tenantA.tenant.id }]);

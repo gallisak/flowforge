@@ -1,16 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
+import { Job } from '../entities';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface AuthenticatedTenant {
   id: string;
   name: string;
-}
-
-export interface WebhookTarget {
-  tenantId: string;
 }
 
 export interface ScheduledWorkflow {
@@ -20,9 +17,12 @@ export interface ScheduledWorkflow {
   timezone: string;
 }
 
-export interface ReadyJob {
+export interface ReapedJob {
   id: string;
   tenantId: string;
+  executionId: string;
+  status: 'queued' | 'dead';
+  attempts: number;
 }
 
 @Injectable()
@@ -56,8 +56,12 @@ export class TenantDb {
     return this.dataSource.query('SELECT * FROM list_scheduled_workflows()');
   }
 
-  async nextReadyJob(): Promise<ReadyJob | null> {
-    const rows: ReadyJob[] = await this.dataSource.query('SELECT * FROM next_ready_job()');
+  reapExpiredJobs(): Promise<ReapedJob[]> {
+    return this.dataSource.query('SELECT * FROM reap_expired_jobs()');
+  }
+
+  async claimJob(workerId: string, leaseSeconds: number): Promise<Job | null> {
+    const rows: Job[] = await this.dataSource.query('SELECT * FROM claim_job($1, $2)', [workerId, leaseSeconds]);
     return rows[0] ?? null;
   }
 }

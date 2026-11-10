@@ -67,9 +67,16 @@ instead of starting half-configured. Error messages never contain secret values.
 | `PORT` | api | `3000` | integer 0..65535 |
 | `DATABASE_URL` | api, worker | — | required, `postgres://`, application role |
 | `MIGRATION_DATABASE_URL` | migrate | — | required, `postgres://`, migration role |
+| `DB_CONNECT_TIMEOUT_MS` | api, worker | `5000` | integer 100..120000; waiting for a pooled connection |
+| `DB_STATEMENT_TIMEOUT_MS` | api, worker | `15000` | integer 100..600000; server-side statement timeout, the client gives up 5 s later |
 | `ADMIN_TOKEN` | api | — | required; at least 8 characters, in production at least 32 random characters |
 | `WORKER_CONCURRENCY` | worker | `4` | integer 1..64 |
 | `SCHEDULER_TICK_MS` | api | `30000` | integer 1000..3600000 |
+| `WORKER_LEASE_SECONDS` | worker | `30` | integer 2..3600; heartbeat every third of it |
+| `WORKER_REAPER_INTERVAL_MS` | worker | `5000` | integer 100..600000 |
+| `WORKER_SHUTDOWN_GRACE_MS` | worker | `25000` | integer 0..600000; keep below the container stop timeout |
+| `RETRY_BASE_MS` | worker | `1000` | integer 10..600000 |
+| `RETRY_CAP_MS` | worker | `300000` | integer, not smaller than `RETRY_BASE_MS` |
 
 ## Database
 
@@ -77,6 +84,11 @@ The schema is managed by TypeORM migrations in `apps/api/src/migrations`; `synch
 `npm run migrate` (or the `migrate` compose service) applies pending migrations under a Postgres
 advisory lock, so several migrators started at once apply each migration exactly once.
 `npm run migration:generate -- src/migrations/<Name>` generates a migration from entity changes.
+
+Every database call of the API and the workers is bounded: acquiring a connection
+(`DB_CONNECT_TIMEOUT_MS`), a statement on the server (`DB_STATEMENT_TIMEOUT_MS`), the client waiting for
+an unresponsive server (statement timeout + 5 s) and a transaction left idle (twice the statement
+timeout). When Postgres stops answering, requests fail with a generic `500` instead of hanging.
 
 Two roles are provisioned by `docker/postgres/provision.sql`:
 
@@ -121,6 +133,57 @@ Limitations: row level security protects against bugs in the application, not ag
 injection, because injected SQL could set `app.tenant_id` itself; queries stay parameterised. The
 migration role owns the tables and therefore bypasses the policies; it is used only by `migrate`.
 Each tenant operation is its own short transaction, which costs one extra round trip.
+
+## Job queue
+
+The queue is the `jobs` table. One job drives one execution.
+
+```
+                  claim_job (SKIP LOCKED)            complete (fenced)
+  queued ─────────────────────────────▶ running ─────────────────────▶ done
+    ▲  ▲                                 │  │  │
+    │  └──── retryable error, attempts   │  │  └─ non-retryable error ──▶ failed
+    │        left: runAt = now + backoff │  └──── retryable error, no attempts left ──▶ dead
+    │                                    │
+    └──── shutdown release / lease expired (reaper) ── lease expired, no attempts left ──▶ dead
+```
+
+- **Claiming** — `claim_job(worker, lease)` selects the oldest due job with `FOR UPDATE SKIP LOCKED`
+  and marks it `running` in the same statement, so concurrent workers never get the same job and
+  never wait for each other. It increments `attempts`, which also serves as a fencing token.
+- **Lease and heartbeat** — a claimed job is owned until `lockedUntil`. The worker extends it every
+  third of `WORKER_LEASE_SECONDS`. When the database answers that the job is no longer owned, or when
+  no extension has succeeded for a whole lease, ownership is gone and the running step is aborted; a
+  renewal that fails because of a short database hiccup is retried on the next beat.
+- **Recovery** — every worker runs `reap_expired_jobs()` every `WORKER_REAPER_INTERVAL_MS`: jobs whose
+  lease expired go back to `queued`, or to `dead` when they have no attempts left (a job that crashes
+  its worker every time cannot loop forever); a dead job and its failed execution are written in the
+  same statement.
+- **Fencing** — extending, completing, failing and releasing a job are conditional on the same
+  `lockedBy` and `attempts`; completion updates the job and its execution in one transaction. A worker
+  that lost its lease cannot overwrite the result of the worker that took over.
+- **Retries** — errors are classified: HTTP 5xx, 408, 425, 429, connection errors and timeouts are
+  retryable; other 4xx, invalid expressions and missing workflows are not. A retryable failure is
+  rescheduled after `random(base, min(cap, base · 2^attempt))` ms (exponential backoff with jitter, so
+  jobs that failed together do not retry together); after `maxAttempts` the job becomes `dead`. A
+  non-retryable failure goes straight to `failed`. In both cases the execution is `failed` with the
+  error.
+- **Graceful shutdown** — on `SIGTERM` the worker stops claiming, waits up to
+  `WORKER_SHUTDOWN_GRACE_MS` for running jobs, then aborts the rest and releases them to `queued`
+  without counting the attempt.
+
+| Option | Verdict |
+|---|---|
+| `SELECT ... FOR UPDATE SKIP LOCKED` + lease columns | **Chosen**: one statement, state visible in the table, survives any process crash, indexable. |
+| `FOR UPDATE` without `SKIP LOCKED` | Correct but serialises all workers on the head of the queue. |
+| Optimistic `UPDATE ... WHERE status = 'queued'` | Correct, but under contention most claims lose and retry. |
+| Session advisory locks as ownership | Released automatically on disconnect, but invisible in the table and requires holding a connection for the whole job. |
+| `LISTEN/NOTIFY` as the queue | Not durable; useful only as a wake-up signal. |
+| Redis / RabbitMQ | Out of scope by the task: the queue must live in Postgres. |
+
+Limitations at this point: a retry still re-runs the workflow from the first step and steps are not
+idempotent yet (addressed by durable execution); claim order is global FIFO by `runAt` (per-tenant
+fairness comes with tenant limits); idle workers poll every 250 ms.
 
 ## Tests
 
@@ -186,6 +249,114 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   property). A targeted mutation script was chosen because it proves exactly the claim in the test name.
   Since row level security was added, the database also stops this mutant, so the script is meaningful
   on the commits of this finding, which is how `prove-finding.sh` runs it.
+
+### F-03 · Concurrent workers execute the same job several times · Queue correctness with several workers · Critical
+
+- **What:** `apps/api/src/engine/job-queue.service.ts:17-34`. `claimNext` first selects the oldest
+  queued job and then updates it in a separate statement, without a row lock and without re-checking
+  `status = 'queued'` in the `UPDATE`. Every worker slot that polls between the two statements gets
+  the same job and runs it.
+- **Why it is dangerous:** side effects happen several times: the same HTTP call (a payment, an email,
+  an order) is sent two, three or four times, step results are recorded several times and `attempts`
+  is inflated. With the default compose setup (2 workers × 4 slots) a smoke run executed every step 8
+  times.
+- **How to reproduce:** `apps/api/test/integration/findings/F-03-exactly-once-claim.int-spec.ts`
+  (the starter's `it.todo('claims each job exactly once when several workers poll concurrently')`):
+  4 workers × 4 slots process 60 jobs whose single step calls a recording HTTP receiver. On the starter
+  code the receiver saw 197 calls for 60 jobs. `scripts/prove-finding.sh F-03`.
+- **How it was fixed:** claiming is one atomic statement in the `claim_job` function
+  (`apps/api/src/migrations/1794308377302-atomic-job-claim.ts`): `UPDATE jobs ... FROM (SELECT id ...
+  ORDER BY "runAt" LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *`. A row locked by another claimer is
+  skipped instead of waited for or taken twice. The function is `SECURITY DEFINER` because claiming
+  is cross-tenant; it returns only the claimed job.
+- **Alternatives considered:** `SELECT ... FOR UPDATE` without `SKIP LOCKED` (correct, but all
+  workers queue behind the same row); an optimistic `UPDATE ... WHERE id = $1 AND status = 'queued'`
+  with retries (correct, but under contention most claims lose and retry); advisory locks per job
+  (state lives outside the table and is lost silently when a session ends); `LISTEN/NOTIFY` as the
+  queue (notifications are not durable). See the queue design notes for the full comparison.
+
+### F-04 · Jobs of a crashed worker are never recovered · Worker crash behaviour · Critical
+
+- **What:** a claimed job gets `status = 'running'` and a 60 second `lockedUntil`
+  (`apps/api/src/engine/job-queue.service.ts:6`), but nothing ever looks at `lockedUntil`: claiming
+  only considers `status = 'queued'` (`:19`), there is no reaper and no heartbeat, and
+  `apps/api/src/engine/job-runner.service.ts:52-92` never renews the lease. Writes at the end of a job
+  are not tied to the lease either.
+- **Why it is dangerous:** when a worker process dies (OOM, deploy, `SIGKILL`, node failure) every job
+  it held stays `running` forever and its execution never finishes. Adding a naive reaper alone would
+  be worse: a step that runs longer than the lease (a `delay`, a slow HTTP call) would be reclaimed
+  while still running and executed twice, and the first worker would still be able to mark it done.
+- **How to reproduce:** `apps/api/test/integration/findings/F-04-lease-recovery.int-spec.ts`
+  (the starter's `it.todo('re-queues a job whose worker died while holding the lease')`) seeds jobs
+  held by a worker that no longer exists, with an expired lease. On the starter code they stay
+  `running` forever. `scripts/prove-finding.sh F-04`.
+- **How it was fixed:**
+  - reaper: every worker runs `reap_expired_jobs()` every `WORKER_REAPER_INTERVAL_MS`; expired jobs go
+    back to `queued`, or to the new `dead` state when they already used all attempts (a job that kills
+    its worker every time cannot loop forever), and the execution of a dead job is marked `failed`;
+  - heartbeat: while a job runs, its worker extends `lockedUntil` every third of
+    `WORKER_LEASE_SECONDS`; if the extension fails the lease is gone, the running step is aborted
+    through an `AbortSignal` and its result is discarded;
+  - fencing: extending, completing and failing a job only succeed for the same `lockedBy` and
+    `attempts` that claimed it, and completion updates the job and the execution in one transaction.
+  - Tests: `apps/api/test/integration/queue/lease.int-spec.ts` (a step longer than the lease is not
+    taken over; a worker whose job was taken over cannot complete it).
+- **Alternatives considered:** reclaiming expired jobs inside `claim_job` instead of a separate reaper
+  (fewer moving parts, but dead jobs would need a second code path anyway and the reaper is easier to
+  observe); session-level advisory locks as the ownership marker (released automatically when the
+  connection dies, but a worker holds a connection per job for the whole step and ownership is
+  invisible in the table); a very long lease without heartbeat (slow recovery and still unsafe for
+  long steps).
+
+### F-05 · A stopping worker abandons its current job · Worker crash behaviour · High
+
+- **What:** `apps/api/src/engine/job-runner.service.ts:32-34`. On `SIGTERM` the worker only sets
+  `running = false`. Nest then closes the TypeORM connection in the same shutdown sequence and exits,
+  while the job that was being processed is still in the middle of a step: it can neither record its
+  result nor give the job back.
+- **Why it is dangerous:** every deploy, scale-down or `docker stop` leaves the jobs that were running
+  at that moment stuck in `running` (permanently before F-04, for a whole lease after it), executions
+  hang, and a job that had almost finished is redone later from scratch.
+- **How to reproduce:** `apps/api/test/integration/findings/F-05-graceful-shutdown.int-spec.ts` runs a
+  real worker process, sends `SIGTERM` in the middle of a step that finishes in 1.5 s and in the middle
+  of a step that never finishes. On the starter code both jobs stay `running`.
+  `scripts/prove-finding.sh F-05`.
+- **How it was fixed:** `JobRunnerService.beforeApplicationShutdown` (runs before Nest closes the
+  database connection) stops claiming and the reaper, waits up to `WORKER_SHUTDOWN_GRACE_MS` (25 s by
+  default; compose gives the container 30 s before `SIGKILL`) for the running jobs, then aborts the
+  remaining ones through their `AbortSignal` and releases them: back to `queued`, lease cleared,
+  execution back to `pending`, and the attempt is not counted because the job did nothing wrong.
+  Release is fenced like completion, and a job claimed while shutdown already started is released at
+  once.
+- **Alternatives considered:** exiting immediately and relying on lease expiry (correct after F-04, but
+  every deploy delays affected executions by a full lease and costs an attempt); waiting without a
+  limit (a hanging step would block the deploy until the orchestrator kills the process anyway);
+  counting the interrupted attempt (a job could go `dead` purely because of frequent deploys).
+
+### F-06 · A job whose workflow was deleted hangs forever · Queue poison jobs · High
+
+- **What:** `apps/api/src/engine/job-runner.service.ts:53-54` loads the execution and the workflow with
+  `findOneOrFail` before the `try` block that handles job failures. `DELETE /workflows/:id`
+  (`apps/api/src/workflows/workflows.service.ts:55-58`) removes a workflow even when executions of it
+  are still queued.
+- **Why it is dangerous:** deleting a workflow right after starting it is a normal user action, but the
+  worker loop catches the exception as a generic "loop error": the job is neither failed nor retried,
+  it stays `running`, and the execution stays `pending` forever. After F-04 the job would only be
+  reclaimed and crash again until it went `dead`, burning attempts and worker time without any useful
+  error for the user.
+- **How to reproduce:** `apps/api/test/integration/findings/F-06-poison-job.int-spec.ts` runs a workflow
+  through the API, deletes it, starts a worker and expects a failed execution that mentions the
+  workflow. On the starter code the execution stays `pending` and the job `running`.
+  `scripts/prove-finding.sh F-06`.
+- **How it was fixed:** the whole processing, including loading the execution and the workflow, is
+  inside the failure handling. A missing execution or workflow is a non-retryable error with a clear
+  message, so the job is failed once and the execution is marked `failed` with that message; any other
+  unexpected error (for example a database outage) is treated as retryable.
+- **Alternatives considered:** forbidding deletion while executions are pending (surprising for users
+  and still leaves the worker fragile against any other missing row); a foreign key with
+  `ON DELETE CASCADE` (silently deletes execution history). Executions will work from a snapshot of the
+  workflow version taken at start (durable execution phase), so deleting a workflow will no longer
+  affect executions that already started.
 
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 
@@ -261,6 +432,7 @@ automatically in throwaway git worktrees. Line references point to the `initial 
 | File | Change | Reason |
 |---|---|---|
 | `apps/api/test/executions.service.spec.ts` | removed | F-02: the test could not fail; replaced by a real integration test |
+| `apps/api/test/job-queue.spec.ts` | removed `it.todo('claims each job exactly once when several workers poll concurrently')` | implemented as `test/integration/findings/F-03-exactly-once-claim.int-spec.ts` |
+| `apps/api/test/job-queue.spec.ts` | removed `it.todo('re-queues a job whose worker died while holding the lease')` | implemented as `test/integration/findings/F-04-lease-recovery.int-spec.ts` |
 
-All other starter tests are unchanged. The two `it.todo` entries in `test/job-queue.spec.ts` are
-implemented as separate integration tests together with the corresponding fixes.
+All other starter tests are unchanged.

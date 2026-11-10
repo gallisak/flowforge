@@ -20,6 +20,7 @@ describe('loadApiConfig', () => {
       nodeEnv: 'development',
       port: 3000,
       databaseUrl: DATABASE_URL,
+      databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
       adminToken: 'dev-admin-token',
       schedulerTickMs: 30_000,
     });
@@ -59,6 +60,8 @@ describe('loadApiConfig', () => {
     ['PORT', '70000'],
     ['PORT', '1.5'],
     ['SCHEDULER_TICK_MS', '10'],
+    ['DB_CONNECT_TIMEOUT_MS', '0'],
+    ['DB_STATEMENT_TIMEOUT_MS', 'forever'],
   ])('rejects %s=%s', (name, value) => {
     expect(problemsOf(() => loadApiConfig({ DATABASE_URL, ADMIN_TOKEN: 'dev-admin-token', [name]: value }))).toEqual([
       expect.stringMatching(new RegExp(`^${name} must be an integer`)),
@@ -98,8 +101,29 @@ describe('loadWorkerConfig', () => {
     expect(loadWorkerConfig({ DATABASE_URL })).toEqual({
       nodeEnv: 'development',
       databaseUrl: DATABASE_URL,
+      databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
       workerConcurrency: 4,
+      leaseSeconds: 30,
+      reaperIntervalMs: 5_000,
+      shutdownGraceMs: 25_000,
+      retryBaseMs: 1_000,
+      retryCapMs: 300_000,
     });
+  });
+
+  it('rejects a retry cap below the retry base', () => {
+    expect(problemsOf(() => loadWorkerConfig({ DATABASE_URL, RETRY_BASE_MS: '5000', RETRY_CAP_MS: '1000' }))).toEqual([
+      'RETRY_CAP_MS must not be smaller than RETRY_BASE_MS',
+    ]);
+  });
+
+  it.each([
+    ['WORKER_LEASE_SECONDS', '1'],
+    ['WORKER_REAPER_INTERVAL_MS', '50'],
+  ])('rejects %s=%s', (name, value) => {
+    expect(problemsOf(() => loadWorkerConfig({ DATABASE_URL, [name]: value }))).toEqual([
+      expect.stringMatching(new RegExp(`^${name} must be an integer`)),
+    ]);
   });
 
   it.each(['0', '65', 'many'])('rejects WORKER_CONCURRENCY=%s', (value) => {
