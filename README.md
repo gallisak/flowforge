@@ -37,10 +37,14 @@ reproduction of a finding fails before its fix and passes after it.
 | F-08 | Http steps can reach internal addresses | `test/integration/findings/F-08-ssrf.int-spec.ts` |
 | F-09 | Step results are read and stored without a size limit | `test/integration/findings/F-09-response-size-limits.int-spec.ts` |
 | F-10 | Input values can rewrite the url of an http step | `test/integration/findings/F-10-url-template-injection.int-spec.ts` |
+| F-11 | Webhook signatures are checked against a re-serialized body | `test/integration/findings/F-11-raw-body-signature.int-spec.ts` |
+| F-12 | Webhook signatures are compared with a timing leak | `test/integration/findings/F-12-constant-time-signature.int-spec.ts` |
+| F-13 | Replayed and stale webhooks start new executions | `test/integration/findings/F-13-webhook-replay.int-spec.ts` |
 | F-18 | A retry repeats steps that already succeeded | `test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts` |
 | F-19 | A running execution picks up edits of its workflow | `test/integration/findings/F-19-workflow-version-snapshot.int-spec.ts` |
 | F-20 | A delay holds a worker slot and restarts after a crash | `test/integration/findings/F-20-durable-delay.int-spec.ts` |
 | F-23 | Input is not validated at the API boundary | `test/integration/findings/F-23-input-validation.int-spec.ts` |
+| F-24 | Webhook responses reveal which workflows exist | `test/integration/findings/F-24-webhook-enumeration.int-spec.ts` |
 | F-25 | API runs as a database superuser and accepts a placeholder admin token | `test/integration/findings/F-25-least-privilege.int-spec.ts` |
 | F-26 | A NUL character makes data impossible to store | `test/integration/findings/F-26-nul-characters.int-spec.ts` |
 | F-27 | Deeply nested JSON crashes the API and poisons steps | `test/integration/findings/F-27-deeply-nested-json.int-spec.ts` |

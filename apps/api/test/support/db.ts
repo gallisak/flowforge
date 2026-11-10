@@ -60,7 +60,7 @@ export async function seedTenant(ds: DataSource, name = 'acme'): Promise<SeededT
   const apiKey = `ff_test_${randomBytes(16).toString('hex')}`;
   const repo = ds.getRepository(Tenant);
   const tenant = await repo.save(
-    repo.create({ name, apiKeyHash: hashApiKey(apiKey), webhookSecret: randomBytes(24).toString('hex') }),
+    repo.create({ name, apiKeyHash: hashApiKey(apiKey) }),
   );
   return { tenant, apiKey };
 }

@@ -10,6 +10,7 @@ export class ExecutionsService {
     workflow: Pick<Workflow, 'id' | 'tenantId'>,
     input: Record<string, unknown>,
     trigger: Execution['trigger'],
+    triggerKey: string | null = null,
   ): Promise<Execution> {
     return this.db.run(workflow.tenantId, async (em) => {
       const current = await em.findOne(Workflow, {
@@ -17,17 +18,29 @@ export class ExecutionsService {
         lock: { mode: 'pessimistic_read' },
       });
       if (!current) throw new NotFoundException('Workflow not found');
-      const execution = await em.save(
-        em.create(Execution, {
+      const inserted = await em
+        .createQueryBuilder()
+        .insert()
+        .into(Execution)
+        .values({
           tenantId: workflow.tenantId,
           workflowId: workflow.id,
           workflowVersion: current.version,
-          input,
+          input: () => ':input',
           trigger,
-        }),
-      );
-      await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: execution.id }));
-      return execution;
+          triggerKey,
+        })
+        .setParameter('input', JSON.stringify(input))
+        .orIgnore()
+        .returning('id')
+        .execute();
+      const id: string | undefined = inserted.raw[0]?.id;
+      if (!id) {
+        if (!triggerKey) throw new Error('the execution was not inserted');
+        return em.findOneOrFail(Execution, { where: { tenantId: workflow.tenantId, triggerKey } });
+      }
+      await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: id }));
+      return em.findOneOrFail(Execution, { where: { id } });
     });
   }
 

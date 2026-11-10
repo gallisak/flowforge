@@ -11,9 +11,6 @@ export class Tenant {
   @Column({ unique: true })
   apiKeyHash: string;
 
-  @Column()
-  webhookSecret: string;
-
   @CreateDateColumn()
   createdAt: Date;
 }

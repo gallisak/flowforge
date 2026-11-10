@@ -23,6 +23,8 @@ describe('loadApiConfig', () => {
       databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
       adminToken: 'dev-admin-token',
       schedulerTickMs: 30_000,
+      webhookToleranceSeconds: 300,
+      webhookSecretGraceSeconds: 86_400,
     });
   });
 
