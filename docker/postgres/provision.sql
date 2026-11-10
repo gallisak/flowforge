@@ -1,0 +1,22 @@
+\set ON_ERROR_STOP on
+
+SELECT format(
+  'CREATE ROLE flowforge_owner LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS',
+  :'owner_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowforge_owner') \gexec
+
+SELECT format(
+  'CREATE ROLE flowforge_app LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS',
+  :'app_password'
+)
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'flowforge_app') \gexec
+
+ALTER SCHEMA public OWNER TO flowforge_owner;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO flowforge_app;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE flowforge_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO flowforge_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE flowforge_owner IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO flowforge_app;

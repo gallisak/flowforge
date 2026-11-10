@@ -30,11 +30,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-run_at() {
-  local commit="$1" label="$2" dir="$TMP/$2"
-  git worktree add --detach --quiet "$dir" "$commit"
-  [[ -e "$dir/apps/api/node_modules" ]] || ln -s "$ROOT/apps/api/node_modules" "$dir/apps/api/node_modules"
-  local log="$TMP/$label.log"
+run_reproduction() {
+  local dir="$1" log="$2"
   local mutation="$dir/scripts/mutation/${ID}.sh"
   if [[ -x "$mutation" ]]; then
     local status=0
@@ -53,6 +50,20 @@ run_at() {
   else
     echo error
   fi
+}
+
+run_at() {
+  local commit="$1" label="$2" dir="$TMP/$2"
+  git worktree add --detach --quiet "$dir" "$commit"
+  [[ -e "$dir/apps/api/node_modules" ]] || ln -s "$ROOT/apps/api/node_modules" "$dir/apps/api/node_modules"
+  local log="$TMP/$label.log"
+  local result
+  result="$(run_reproduction "$dir" "$log")"
+  if [[ "$result" == error ]]; then
+    mv "$log" "$log.first-attempt"
+    result="$(run_reproduction "$dir" "$log")"
+  fi
+  echo "$result"
 }
 
 short() { git log --format='%h %s' -n 1 "$1"; }

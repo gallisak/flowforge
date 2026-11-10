@@ -1,9 +1,10 @@
-import { Body, Controller, ForbiddenException, Headers, Post } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Headers, Inject, Post } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes, timingSafeEqual } from 'crypto';
 import { IsString, MinLength } from 'class-validator';
 import { Repository } from 'typeorm';
 import { hashApiKey } from '../auth/api-key.guard';
+import { API_CONFIG, ApiConfig } from '../config/config';
 import { Tenant } from '../entities';
 
 class CreateTenantDto {
@@ -20,11 +21,14 @@ function safeEqual(a: string, b: string): boolean {
 
 @Controller('tenants')
 export class TenantsController {
-  constructor(@InjectRepository(Tenant) private readonly tenants: Repository<Tenant>) {}
+  constructor(
+    @InjectRepository(Tenant) private readonly tenants: Repository<Tenant>,
+    @Inject(API_CONFIG) private readonly config: ApiConfig,
+  ) {}
 
   @Post()
   async create(@Body() dto: CreateTenantDto, @Headers('x-admin-token') admin?: string) {
-    const expected = process.env.ADMIN_TOKEN ?? '';
+    const expected = this.config.adminToken;
     if (!expected || !admin || !safeEqual(admin, expected)) {
       throw new ForbiddenException();
     }
