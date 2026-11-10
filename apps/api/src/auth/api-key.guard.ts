@@ -21,11 +21,11 @@ export class ApiKeyGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest<TenantRequest>();
     const key = req.headers['x-api-key'];
     if (typeof key !== 'string' || key.length === 0) {
-      throw new UnauthorizedException('Відсутній x-api-key');
+      throw new UnauthorizedException('Missing x-api-key');
     }
     const tenant = await this.tenants.findOne({ where: { apiKeyHash: hashApiKey(key) } });
     if (!tenant) {
-      throw new UnauthorizedException('Невірний API-ключ');
+      throw new UnauthorizedException('Invalid API key');
     }
     req.tenant = tenant;
     return true;

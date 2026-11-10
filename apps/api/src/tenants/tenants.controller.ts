@@ -22,7 +22,6 @@ function safeEqual(a: string, b: string): boolean {
 export class TenantsController {
   constructor(@InjectRepository(Tenant) private readonly tenants: Repository<Tenant>) {}
 
-  /** Службовий ендпоінт створення тенанта (захищений ADMIN_TOKEN). */
   @Post()
   async create(@Body() dto: CreateTenantDto, @Headers('x-admin-token') admin?: string) {
     const expected = process.env.ADMIN_TOKEN ?? '';

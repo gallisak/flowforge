@@ -13,15 +13,15 @@ export default function ConnectPage() {
     const res = await fetch('/api/connect', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey }),
     });
-    if (!res.ok) return setError('Не вдалося зберегти ключ');
+    if (!res.ok) return setError('Failed to save the key');
     router.push('/workflows');
   }
 
   return (
     <form onSubmit={submit}>
-      <h1>API-ключ</h1>
+      <h1>API key</h1>
       <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="ff_..." style={{ width: 360 }} />
-      <button type="submit">Зберегти</button>
+      <button type="submit">Save</button>
       {error && <p style={{ color: 'crimson' }}>{error}</p>}
     </form>
   );

@@ -13,7 +13,6 @@ export function backoffMs(attempt: number): number {
 export class JobQueueService {
   constructor(@InjectDataSource() private readonly ds: DataSource) {}
 
-  /** Бере наступну готову до виконання задачу, або null. */
   async claimNext(workerId: string): Promise<Job | null> {
     const rows: Array<{ id: string }> = await this.ds.query(
       `SELECT id FROM jobs WHERE status = 'queued' AND "runAt" <= now() ORDER BY "runAt" LIMIT 1`,
@@ -37,7 +36,6 @@ export class JobQueueService {
     await this.ds.query(`UPDATE jobs SET status = 'done', "lockedBy" = NULL, "lockedUntil" = NULL WHERE id = $1`, [jobId]);
   }
 
-  /** Повертає true, якщо задачу буде повторено, false — якщо вичерпано спроби. */
   async fail(job: Job, error: string, retryable: boolean): Promise<boolean> {
     if (retryable && job.attempts < job.maxAttempts) {
       await this.ds.query(

@@ -12,7 +12,6 @@ function lookup(ctx: StepContext, path: string): unknown {
   return cur;
 }
 
-/** Підставляє {{ input.x }} / {{ steps.id.field }} у рядок. Без виконання коду. */
 export function renderTemplate(template: string, ctx: StepContext): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g, (_m, path: string) => {
     const value = lookup(ctx, path);
