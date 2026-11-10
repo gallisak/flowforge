@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { MAX_JSON_DEPTH, valueExceedsDepth } from '../common/json-depth';
 import { toStorable } from '../common/storable';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { StepDefinition } from '../entities';
@@ -75,7 +76,11 @@ export class StepExecutor implements OnApplicationShutdown {
   }
 
   async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
-    const output = toStorable(await this.run(step, ctx, runtime));
+    const result = await this.run(step, ctx, runtime);
+    if (valueExceedsDepth(result, MAX_JSON_DEPTH)) {
+      throw new StepError(`step output is nested deeper than ${MAX_JSON_DEPTH} levels`, false);
+    }
+    const output = toStorable(result);
     const size = output === undefined ? 0 : Buffer.byteLength(JSON.stringify(output));
     if (size > this.outputMaxBytes) throw new StepError(`step output exceeds ${this.outputMaxBytes} bytes`, false);
     return output;
