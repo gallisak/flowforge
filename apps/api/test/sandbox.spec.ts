@@ -103,4 +103,13 @@ describe('TransformSandbox', () => {
     const results = await Promise.all(Array.from({ length: 6 }, (_, i) => sandbox.evaluate('ctx.i * 10', { i })));
     expect(results).toEqual([0, 10, 20, 30, 40, 50]);
   });
+
+  it('rejects evaluations still waiting for a thread when it shuts down', async () => {
+    const single = new TransformSandbox(limits, 1);
+    const running = single.evaluate('(() => { for (;;) {} })()', {}).catch((e: unknown) => e);
+    const waiting = single.evaluate('1', {}).catch((e: unknown) => e);
+    await single.close();
+    expect(await waiting).toMatchObject({ message: 'transform sandbox is shut down', retryable: true });
+    expect(await running).toBeInstanceOf(TransformError);
+  });
 });

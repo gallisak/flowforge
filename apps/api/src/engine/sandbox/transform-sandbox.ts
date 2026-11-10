@@ -68,7 +68,12 @@ class SandboxThread {
   }
 
   async run(request: SandboxRequest, hardTimeoutMs: number): Promise<SandboxReply> {
-    await this.ready;
+    try {
+      await this.ready;
+    } catch (error) {
+      await this.terminate();
+      throw error;
+    }
     return new Promise<SandboxReply>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending = undefined;
@@ -106,7 +111,7 @@ class SandboxThread {
 export class TransformSandbox {
   private readonly idle: SandboxThread[] = [];
   private readonly all = new Set<SandboxThread>();
-  private readonly waiters: Array<(thread: SandboxThread) => void> = [];
+  private readonly waiters: Array<{ resolve(thread: SandboxThread): void; reject(error: Error): void }> = [];
   private closed = false;
 
   constructor(
@@ -130,6 +135,7 @@ export class TransformSandbox {
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const waiter of this.waiters.splice(0)) waiter.reject(new TransformError('transform sandbox is shut down', true));
     await Promise.all([...this.all].map((thread) => thread.terminate()));
   }
 
@@ -142,13 +148,13 @@ export class TransformSandbox {
       this.all.add(created);
       return Promise.resolve(created);
     }
-    return new Promise((resolve) => this.waiters.push(resolve));
+    return new Promise((resolve, reject) => this.waiters.push({ resolve, reject }));
   }
 
   private release(thread: SandboxThread): void {
     if (!thread.alive || this.closed) return;
     const waiter = this.waiters.shift();
-    if (waiter) waiter(thread);
+    if (waiter) waiter.resolve(thread);
     else this.idle.push(thread);
   }
 
@@ -160,7 +166,7 @@ export class TransformSandbox {
     if (waiter && !this.closed) {
       const replacement = new SandboxThread((exited) => this.forget(exited));
       this.all.add(replacement);
-      waiter(replacement);
+      waiter.resolve(replacement);
     }
   }
 }

@@ -112,7 +112,10 @@ describe('SafeHttpClient', () => {
       else if (kind === 'blocked') res.writeHead(307, { location: `${blocked.url}/landed` }).end();
       else if (kind === 'hang') return;
       else if (kind === 'big') res.writeHead(200).end('b'.repeat(1_025));
-      else if (kind === 'exact') res.writeHead(200).end('e'.repeat(1_024));
+      else if (kind === 'declared') {
+        res.writeHead(200, { 'content-length': '5000' });
+        res.write('only the beginning');
+      } else if (kind === 'exact') res.writeHead(200).end('e'.repeat(1_024));
       else if (kind === 'chunked') {
         res.writeHead(200);
         for (let i = 0; i < 20; i++) res.write('c'.repeat(100));
@@ -219,6 +222,10 @@ describe('SafeHttpClient', () => {
 
   it('refuses a body one byte above the limit', async () => {
     await expect(send(`${allowed.url}/big`)).rejects.toBeInstanceOf(ResponseTooLargeError);
+  });
+
+  it('refuses a declared length above the limit before reading the body', async () => {
+    await expect(send(`${allowed.url}/declared`)).rejects.toBeInstanceOf(ResponseTooLargeError);
   });
 
   it('refuses a chunked body that grows past the limit', async () => {

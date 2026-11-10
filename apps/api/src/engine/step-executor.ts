@@ -42,6 +42,7 @@ export function sanitizeLogMessage(message: string): string {
 }
 
 const MAX_SANDBOX_THREADS = 4;
+const REJECTED_REQUEST_CODES = new Set(['UND_ERR_INVALID_ARG', 'UND_ERR_NOT_SUPPORTED']);
 
 @Injectable()
 export class StepExecutor implements OnApplicationShutdown {
@@ -135,6 +136,7 @@ export class StepExecutor implements OnApplicationShutdown {
     if (blocked) return new StepError(blocked.message, false);
     const permanent = [InvalidRequestUrlError, UrlTemplateError, TooManyRedirectsError, ResponseTooLargeError];
     if (permanent.some((type) => err instanceof type)) return new StepError((err as Error).message, false);
+    if (REJECTED_REQUEST_CODES.has((err as { code?: string }).code ?? '')) return new StepError('http request is invalid', false);
     const name = (err as Error).name;
     const timedOut = name === 'TimeoutError' || name === 'HeadersTimeoutError' || name === 'BodyTimeoutError';
     return new StepError(timedOut ? 'http request timed out' : 'http request failed: connection error', true);
