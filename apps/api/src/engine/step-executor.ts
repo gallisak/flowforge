@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
+import { toStorable } from '../common/storable';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { StepDefinition } from '../entities';
 import {
@@ -74,7 +75,7 @@ export class StepExecutor implements OnApplicationShutdown {
   }
 
   async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
-    const output = await this.run(step, ctx, runtime);
+    const output = toStorable(await this.run(step, ctx, runtime));
     const size = output === undefined ? 0 : Buffer.byteLength(JSON.stringify(output));
     if (size > this.outputMaxBytes) throw new StepError(`step output exceeds ${this.outputMaxBytes} bytes`, false);
     return output;
