@@ -29,7 +29,7 @@ export class ExecutionsController {
   }
 
   @Get('executions/:id')
-  get(@Param('id', ParseUUIDPipe) id: string) {
-    return this.executions.get(id);
+  get(@CurrentTenant() t: Tenant, @Param('id', ParseUUIDPipe) id: string) {
+    return this.executions.get(t.id, id);
   }
 }

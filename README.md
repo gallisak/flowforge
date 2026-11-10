@@ -105,6 +105,28 @@ and passes after it. Each finding is two consecutive commits: the first adds the
 (red), the second fixes the code (green). `scripts/prove-finding.sh F-NN` checks both states
 automatically in throwaway git worktrees. Line references point to the `initial commit`.
 
+### F-01 · Any tenant can read any execution by id · Tenant data isolation · Critical
+
+- **What:** `apps/api/src/executions/executions.controller.ts:31-34` and
+  `apps/api/src/executions/executions.service.ts:33-36`. `GET /executions/:id` is protected by the API
+  key guard, but the controller never passes the caller's tenant to the service, and the service looks
+  the execution up by `id` only.
+- **Why it is dangerous:** any tenant with a valid API key can read the input, output, error and step
+  results of every other tenant's executions, which typically contain customer data and tokens passed
+  to workflows. Execution ids leak easily (logs, webhooks, support tickets) and are the only thing an
+  attacker needs.
+- **How to reproduce:** `apps/api/test/integration/findings/F-01-execution-detail-isolation.int-spec.ts`:
+  tenant A runs a workflow with a private token in its input, tenant B requests the execution by id.
+  On the starter code B gets `200` with A's input. `scripts/prove-finding.sh F-01`.
+- **How it was fixed:** the controller passes the authenticated tenant and the service looks the
+  execution up by `id` and `tenantId`; another tenant's execution is indistinguishable from a missing
+  one (same `404` body). All other data access paths were audited: workflows were already scoped by
+  tenant, webhooks resolve the tenant from the workflow. Row level security added in the same phase
+  enforces the rule in the database as well, so a forgotten filter can no longer leak data.
+- **Alternatives considered:** answering `403` for foreign executions (confirms that the id exists);
+  checking ownership after loading the row (works, but the unscoped query is still one refactoring away
+  from leaking again); relying on row level security alone (defence in depth needs both layers).
+
 ### F-02 · Tenant isolation unit test cannot fail · Tests that pass regardless of behaviour · Medium
 
 - **What:** `apps/api/test/executions.service.spec.ts:8,23`. The test "does not list executions that

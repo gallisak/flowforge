@@ -29,8 +29,8 @@ export class ExecutionsService {
     return this.executions.find({ where: { tenantId }, order: { createdAt: 'DESC' }, take: Math.min(limit, 200) });
   }
 
-  async get(id: string): Promise<Execution & { steps: StepRun[] }> {
-    const execution = await this.executions.findOne({ where: { id } });
+  async get(tenantId: string, id: string): Promise<Execution & { steps: StepRun[] }> {
+    const execution = await this.executions.findOne({ where: { id, tenantId } });
     if (!execution) throw new NotFoundException('Execution not found');
     const steps = await this.stepRuns.find({ where: { executionId: id }, order: { stepIndex: 'ASC', startedAt: 'ASC' } });
     return { ...execution, steps };
