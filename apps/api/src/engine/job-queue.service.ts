@@ -38,8 +38,8 @@ const intervalFromNow = (seconds: number) => () => `now() + make_interval(secs =
 export class JobQueueService {
   constructor(private readonly db: TenantDb) {}
 
-  claimNext(workerId: string, leaseSeconds: number): Promise<Job | null> {
-    return this.db.claimJob(workerId, leaseSeconds);
+  claimNext(workerId: string, leaseSeconds: number, defaultMaxRunning: number): Promise<Job | null> {
+    return this.db.claimJob(workerId, leaseSeconds, defaultMaxRunning);
   }
 
   async extendLease(job: Job, workerId: string, leaseSeconds: number): Promise<boolean> {

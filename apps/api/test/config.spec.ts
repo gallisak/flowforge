@@ -25,6 +25,8 @@ describe('loadApiConfig', () => {
       schedulerTickMs: 30_000,
       webhookToleranceSeconds: 300,
       webhookSecretGraceSeconds: 86_400,
+      tenantRateLimitPerMinute: 600,
+      tenantMaxQueuedJobs: 10_000,
     });
   });
 
@@ -117,6 +119,7 @@ describe('loadWorkerConfig', () => {
       httpMaxResponseBytes: 1_048_576,
       stepOutputMaxBytes: 1_048_576,
       ssrfAllowlist: [],
+      tenantMaxConcurrentJobs: 10,
     });
   });
 

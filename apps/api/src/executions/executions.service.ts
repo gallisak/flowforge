@@ -1,10 +1,17 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
-import { Execution, Job, StepRun, Workflow } from '../entities';
+import { Execution, Job, StepRun, Tenant, Workflow } from '../entities';
+import { TooManyRequestsException } from '../limits/too-many-requests';
+
+const QUEUE_FULL_RETRY_AFTER_SECONDS = 30;
 
 @Injectable()
 export class ExecutionsService {
-  constructor(private readonly db: TenantDb) {}
+  constructor(
+    private readonly db: TenantDb,
+    @Inject(API_CONFIG) private readonly config: ApiConfig,
+  ) {}
 
   enqueue(
     workflow: Pick<Workflow, 'id' | 'tenantId'>,
@@ -18,6 +25,17 @@ export class ExecutionsService {
         lock: { mode: 'pessimistic_read' },
       });
       if (!current) throw new NotFoundException('Workflow not found');
+      if (triggerKey) {
+        const existing = await em.findOne(Execution, { where: { tenantId: workflow.tenantId, triggerKey } });
+        if (existing) return existing;
+      }
+      await em.query(`SELECT pg_advisory_xact_lock(hashtextextended('enqueue:' || $1, 0))`, [workflow.tenantId]);
+      const tenant = await em.findOneOrFail(Tenant, { where: { id: workflow.tenantId } });
+      const maxQueued = tenant.maxQueuedJobs ?? this.config.tenantMaxQueuedJobs;
+      const queued = await em.count(Job, { where: { tenantId: workflow.tenantId, status: 'queued' } });
+      if (queued >= maxQueued) {
+        throw new TooManyRequestsException(`Queue limit of ${maxQueued} jobs reached`, QUEUE_FULL_RETRY_AFTER_SECONDS);
+      }
       const inserted = await em
         .createQueryBuilder()
         .insert()

@@ -10,6 +10,7 @@ import { StepIdempotencyKeys1794313078517 } from './1794313078517-step-idempoten
 import { ExecutionTriggerKeys1794320000000 } from './1794320000000-execution-trigger-keys';
 import { WebhookSecretRotation1794320100000 } from './1794320100000-webhook-secret-rotation';
 import { FairJobClaim1794320200000 } from './1794320200000-fair-job-claim';
+import { TenantLimits1794320300000 } from './1794320300000-tenant-limits';
 
 export const migrations = [
   Baseline1794305090749,
@@ -24,4 +25,5 @@ export const migrations = [
   ExecutionTriggerKeys1794320000000,
   WebhookSecretRotation1794320100000,
   FairJobClaim1794320200000,
+  TenantLimits1794320300000,
 ];
