@@ -1,7 +1,7 @@
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
-import { Tenant } from '../entities';
+import { AuthenticatedTenant } from '../db/tenant-db.service';
 import { TenantRequest } from './api-key.guard';
 
-export const CurrentTenant = createParamDecorator((_data: unknown, ctx: ExecutionContext): Tenant => {
+export const CurrentTenant = createParamDecorator((_data: unknown, ctx: ExecutionContext): AuthenticatedTenant => {
   return ctx.switchToHttp().getRequest<TenantRequest>().tenant;
 });

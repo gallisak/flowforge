@@ -1,12 +1,10 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
-import { Repository } from 'typeorm';
-import { Tenant } from '../entities';
+import { AuthenticatedTenant, TenantDb } from '../db/tenant-db.service';
 
 export interface TenantRequest {
   headers: Record<string, string | string[] | undefined>;
-  tenant: Tenant;
+  tenant: AuthenticatedTenant;
 }
 
 export function hashApiKey(key: string): string {
@@ -15,7 +13,7 @@ export function hashApiKey(key: string): string {
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  constructor(@InjectRepository(Tenant) private readonly tenants: Repository<Tenant>) {}
+  constructor(private readonly db: TenantDb) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<TenantRequest>();
@@ -23,7 +21,7 @@ export class ApiKeyGuard implements CanActivate {
     if (typeof key !== 'string' || key.length === 0) {
       throw new UnauthorizedException('Missing x-api-key');
     }
-    const tenant = await this.tenants.findOne({ where: { apiKeyHash: hashApiKey(key) } });
+    const tenant = await this.db.authenticate(hashApiKey(key));
     if (!tenant) {
       throw new UnauthorizedException('Invalid API key');
     }

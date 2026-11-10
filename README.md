@@ -85,6 +85,43 @@ Two roles are provisioned by `docker/postgres/provision.sql`:
 | `flowforge_owner` | runs migrations, owns all tables | DDL in schema `public`; not a superuser |
 | `flowforge_app` | used by the API and workers | `SELECT/INSERT/UPDATE/DELETE` only; no DDL, not a superuser, no `BYPASSRLS` |
 
+## Tenant isolation
+
+Isolation is enforced twice: every query in the services filters by the authenticated tenant, and
+Postgres row level security rejects rows of other tenants even when a query forgets that filter.
+
+- Every tenant table (`tenants`, `workflows`, `executions`, `step_runs`, `jobs`) has row level
+  security enabled with one policy: the row's tenant must equal `app_current_tenant()`, which reads
+  the transaction-local setting `app.tenant_id`. Without the setting nothing is visible and nothing
+  can be written (`USING` and `WITH CHECK`).
+- `TenantDb.run(tenantId, work)` (`apps/api/src/db/tenant-db.service.ts`) opens a transaction, sets
+  `app.tenant_id` with `set_config(..., true)` and runs the work in it; services access tenant data
+  only through it. The setting dies with the transaction, so a pooled connection never carries a
+  tenant into the next request.
+- A few operations are cross-tenant by nature. They are narrow `SECURITY DEFINER` functions owned by
+  the migration role, with a fixed `search_path`, `EXECUTE` revoked from `PUBLIC` and granted only to
+  `flowforge_app`, and they return identifiers only: `auth_tenant` (API key hash → id, name),
+  `resolve_webhook_tenant` (workflow id → tenant id), `list_scheduled_workflows` and `next_ready_job`.
+  Everything after that lookup runs in the tenant's context.
+- Proof: `apps/api/test/integration/tenancy/row-level-security.int-spec.ts` connects as the
+  application role and bypasses the services: without a context every table is empty (also after a
+  previous transaction on the same connection set one), with tenant A's context only A's rows are
+  visible, rows of B cannot be updated, deleted, inserted or moved into, and RLS cannot be disabled.
+  `api-isolation.int-spec.ts` checks the same through the HTTP API.
+
+| Option | Verdict |
+|---|---|
+| Filters in application code only | Not enough: one forgotten `where` leaks data (see F-01). |
+| Schema or database per tenant | Strong isolation, but migrations, pooling and the shared queue become much harder; out of proportion for this platform. |
+| RLS with a session-level `SET` | A pooled connection can keep the previous tenant; a transaction-local setting cannot. |
+| Worker role with `BYPASSRLS` | Simpler queue code, but the worker would process tenant data without any database guard. |
+| **RLS + transaction-local setting + narrow definer functions** | Chosen. |
+
+Limitations: row level security protects against bugs in the application, not against SQL
+injection, because injected SQL could set `app.tenant_id` itself; queries stay parameterised. The
+migration role owns the tables and therefore bypasses the policies; it is used only by `migrate`.
+Each tenant operation is its own short transaction, which costs one extra round trip.
+
 ## Tests
 
 ```bash
@@ -104,6 +141,28 @@ Every finding is reproduced by an automated test or script that fails on the cod
 and passes after it. Each finding is two consecutive commits: the first adds the reproduction
 (red), the second fixes the code (green). `scripts/prove-finding.sh F-NN` checks both states
 automatically in throwaway git worktrees. Line references point to the `initial commit`.
+
+### F-01 · Any tenant can read any execution by id · Tenant data isolation · Critical
+
+- **What:** `apps/api/src/executions/executions.controller.ts:31-34` and
+  `apps/api/src/executions/executions.service.ts:33-36`. `GET /executions/:id` is protected by the API
+  key guard, but the controller never passes the caller's tenant to the service, and the service looks
+  the execution up by `id` only.
+- **Why it is dangerous:** any tenant with a valid API key can read the input, output, error and step
+  results of every other tenant's executions, which typically contain customer data and tokens passed
+  to workflows. Execution ids leak easily (logs, webhooks, support tickets) and are the only thing an
+  attacker needs.
+- **How to reproduce:** `apps/api/test/integration/findings/F-01-execution-detail-isolation.int-spec.ts`:
+  tenant A runs a workflow with a private token in its input, tenant B requests the execution by id.
+  On the starter code B gets `200` with A's input. `scripts/prove-finding.sh F-01`.
+- **How it was fixed:** the controller passes the authenticated tenant and the service looks the
+  execution up by `id` and `tenantId`; another tenant's execution is indistinguishable from a missing
+  one (same `404` body). All other data access paths were audited: workflows were already scoped by
+  tenant, webhooks resolve the tenant from the workflow. Row level security added in the same phase
+  enforces the rule in the database as well, so a forgotten filter can no longer leak data.
+- **Alternatives considered:** answering `403` for foreign executions (confirms that the id exists);
+  checking ownership after loading the row (works, but the unscoped query is still one refactoring away
+  from leaking again); relying on row level security alone (defence in depth needs both layers).
 
 ### F-02 · Tenant isolation unit test cannot fail · Tests that pass regardless of behaviour · Medium
 
@@ -125,6 +184,42 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   (still coupled to the TypeORM call shape and says nothing about what the database returns); a
   mutation-testing tool such as Stryker for the whole codebase (much heavier than needed for one
   property). A targeted mutation script was chosen because it proves exactly the claim in the test name.
+  Since row level security was added, the database also stops this mutant, so the script is meaningful
+  on the commits of this finding, which is how `prove-finding.sh` runs it.
+
+### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
+
+- **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a
+  TypeScript `interface`, so the global `ValidationPipe` has nothing to validate; `create`
+  (`:29-36`) stores `name`, `cron`, `timezone` and `enabled` as received. Steps are checked only for
+  presence of their main field (`apps/api/src/workflows/definition.ts:23-25`).
+  `apps/api/src/executions/executions.controller.ts:28` turns `?limit=` into `Number(limit)`, and
+  `:20` accepts any JSON value as the execution input.
+- **Why it is dangerous:** a missing name or `?limit=abc` produces a `500` from the database layer
+  instead of a `400`; invalid cron expressions and time zones are stored and then fail silently in the
+  scheduler on every tick; a six-field cron such as `* * * * * *` schedules a run every second, which
+  lets one tenant flood the shared queue; unbounded expressions, messages, headers and bodies are
+  stored and later executed by workers; header values with line breaks are passed to outgoing requests.
+- **How to reproduce:** `apps/api/test/integration/findings/F-23-input-validation.int-spec.ts` sends
+  24 invalid requests (missing or oversized fields, bad cron, sub-minute cron, unknown time zone,
+  unsupported HTTP method, non-string headers or body, bad `limit`, array input). On the starter code
+  23 of them are accepted or fail with `500`. `scripts/prove-finding.sh F-23`.
+- **How it was fixed:**
+  - `CreateWorkflowDto` / `UpdateWorkflowDto` (`apps/api/src/workflows/workflow.dto.ts`) with
+    `class-validator` rules for name (1..200), steps, cron, timezone and enabled;
+  - `validateSchedule` (`apps/api/src/workflows/schedule.ts`): 5 or 6 fields, parseable by
+    `cron-parser`, never more often than once per minute (checked on the next ten occurrences in the
+    workflow's time zone), valid IANA time zone; applied on create and on every update;
+  - `validateSteps` (`apps/api/src/workflows/definition.ts`) now limits every field: URL length, HTTP
+    method allow-list, header names, single-line string values, forbidden hop-by-hop headers, body,
+    expression and message size;
+  - `ListExecutionsQuery` requires an integer `limit` in 1..200, and `JsonObjectPipe` requires the
+    execution input to be a JSON object.
+  - Unit tests: `test/workflow-definition-limits.spec.ts`, `test/schedule-validation.spec.ts`.
+- **Alternatives considered:** clamping invalid values silently (hides client bugs and still lets
+  nonsense in); validating the whole workflow with a JSON schema library (one more dependency, while
+  cross-field rules such as "cron frequency in this time zone" still need code); allowing sub-minute
+  schedules for selected tenants (belongs to per-tenant limits, not to input validation).
 
 ### F-25 · API runs as a database superuser and accepts a placeholder admin token · Security / configuration · High
 

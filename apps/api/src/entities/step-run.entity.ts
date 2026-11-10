@@ -7,6 +7,9 @@ export class StepRun {
   id: string;
 
   @Column('uuid')
+  tenantId: string;
+
+  @Column('uuid')
   executionId: string;
 
   @Column('int')

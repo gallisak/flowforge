@@ -1,9 +1,7 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { parseExpression } from 'cron-parser';
-import { Repository } from 'typeorm';
 import { API_CONFIG, ApiConfig } from '../config/config';
-import { Workflow } from '../entities';
+import { TenantDb } from '../db/tenant-db.service';
 import { ExecutionsService } from '../executions/executions.service';
 
 @Injectable()
@@ -13,7 +11,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
   private lastTick = new Date();
 
   constructor(
-    @InjectRepository(Workflow) private readonly workflows: Repository<Workflow>,
+    private readonly db: TenantDb,
     private readonly executions: ExecutionsService,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
@@ -28,15 +26,12 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
   }
 
   async tick(now = new Date()): Promise<number> {
-    const scheduled = await this.workflows
-      .createQueryBuilder('w')
-      .where('w.enabled = true AND w.cron IS NOT NULL')
-      .getMany();
+    const scheduled = await this.db.listScheduledWorkflows();
 
     let fired = 0;
     for (const wf of scheduled) {
       try {
-        const it = parseExpression(wf.cron as string, { currentDate: this.lastTick });
+        const it = parseExpression(wf.cron, { currentDate: this.lastTick });
         for (let next = it.next().toDate(); next <= now; next = it.next().toDate()) {
           await this.executions.enqueue(wf, {}, 'cron');
           fired++;

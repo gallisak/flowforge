@@ -4,11 +4,13 @@ import { createTestDatabase, openDataSource, TestDatabase } from './db';
 export interface IntegrationContext {
   readonly db: TestDatabase;
   readonly ds: DataSource;
+  onTeardown(cleanup: () => Promise<unknown> | unknown): void;
 }
 
 export function useIntegrationContext(): IntegrationContext {
   let db: TestDatabase | undefined;
   let ds: DataSource | undefined;
+  const teardowns: Array<() => Promise<unknown> | unknown> = [];
 
   beforeAll(async () => {
     db = await createTestDatabase();
@@ -17,6 +19,7 @@ export function useIntegrationContext(): IntegrationContext {
   });
 
   afterAll(async () => {
+    for (const cleanup of teardowns.reverse()) await cleanup();
     await ds?.destroy();
     await db?.drop();
   });
@@ -29,6 +32,9 @@ export function useIntegrationContext(): IntegrationContext {
     get ds() {
       if (!ds) throw new Error('Integration context is not initialised yet (use it inside tests or hooks)');
       return ds;
+    },
+    onTeardown(cleanup) {
+      teardowns.push(cleanup);
     },
   };
 }

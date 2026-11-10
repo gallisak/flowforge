@@ -4,6 +4,7 @@ import { ApiKeyGuard } from './auth/api-key.guard';
 import { API_CONFIG, ApiConfig, WORKER_CONFIG, WorkerConfig } from './config/config';
 import { ApiConfigModule, WorkerConfigModule } from './config/config.module';
 import { dataSourceOptions, entities } from './db/data-source';
+import { TenantDb } from './db/tenant-db.service';
 import { JobQueueService } from './engine/job-queue.service';
 import { JobRunnerService } from './engine/job-runner.service';
 import { StepExecutor } from './engine/step-executor';
@@ -25,7 +26,7 @@ import { WorkflowsService } from './workflows/workflows.service';
     TypeOrmModule.forFeature(entities),
   ],
   controllers: [TenantsController, WorkflowsController, ExecutionsController, WebhooksController],
-  providers: [ApiKeyGuard, WorkflowsService, ExecutionsService, SchedulerService],
+  providers: [TenantDb, ApiKeyGuard, WorkflowsService, ExecutionsService, SchedulerService],
 })
 export class AppModule {}
 
@@ -38,6 +39,6 @@ export class AppModule {}
     }),
     TypeOrmModule.forFeature(entities),
   ],
-  providers: [JobQueueService, JobRunnerService, StepExecutor],
+  providers: [TenantDb, JobQueueService, JobRunnerService, StepExecutor],
 })
 export class WorkerModule {}
