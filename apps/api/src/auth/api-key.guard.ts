@@ -1,6 +1,8 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createHash } from 'crypto';
+import { Response } from 'express';
 import { AuthenticatedTenant, TenantDb } from '../db/tenant-db.service';
+import { RateLimitService } from '../limits/rate-limit.service';
 
 export interface TenantRequest {
   headers: Record<string, string | string[] | undefined>;
@@ -13,7 +15,10 @@ export function hashApiKey(key: string): string {
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  constructor(private readonly db: TenantDb) {}
+  constructor(
+    private readonly db: TenantDb,
+    private readonly rateLimit: RateLimitService,
+  ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<TenantRequest>();
@@ -26,6 +31,7 @@ export class ApiKeyGuard implements CanActivate {
       throw new UnauthorizedException('Invalid API key');
     }
     req.tenant = tenant;
+    await this.rateLimit.consume(tenant.id, ctx.switchToHttp().getResponse<Response>());
     return true;
   }
 }

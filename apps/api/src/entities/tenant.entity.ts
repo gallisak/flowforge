@@ -11,6 +11,15 @@ export class Tenant {
   @Column({ unique: true })
   apiKeyHash: string;
 
+  @Column({ type: 'int', nullable: true })
+  maxConcurrentJobs: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  maxQueuedJobs: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  rateLimitPerMinute: number | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

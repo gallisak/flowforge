@@ -8,15 +8,17 @@ import {
   ParseUUIDPipe,
   Post,
   Req,
+  Res,
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { RawBodyRequest } from '../app.setup';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
+import { RateLimitService } from '../limits/rate-limit.service';
 import { verifyWebhook } from './signature';
 import { WebhookSecretsService } from './webhook-secrets.service';
 
@@ -26,6 +28,7 @@ export class WebhooksController {
     private readonly db: TenantDb,
     private readonly executions: ExecutionsService,
     private readonly secrets: WebhookSecretsService,
+    private readonly rateLimit: RateLimitService,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
@@ -34,6 +37,7 @@ export class WebhooksController {
   async receive(
     @Param('workflowId', ParseUUIDPipe) workflowId: string,
     @Req() req: Request & RawBodyRequest,
+    @Res({ passthrough: true }) res: Response,
     @Headers('webhook-id') id?: string,
     @Headers('webhook-timestamp') timestamp?: string,
     @Headers('webhook-signature') signature?: string,
@@ -61,6 +65,7 @@ export class WebhooksController {
       this.config.webhookToleranceSeconds,
     );
     if (!messageId) throw rejected;
+    await this.rateLimit.consume(tenantId, res);
 
     const execution = await this.executions.enqueue(
       workflow,

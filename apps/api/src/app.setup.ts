@@ -3,6 +3,7 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { IncomingMessage } from 'http';
 import { jsonTextExceedsDepth, MAX_JSON_DEPTH } from './common/json-depth';
 import { rejectNulReviver } from './common/storable';
+import { TooManyRequestsFilter } from './limits/too-many-requests';
 
 export type RawBodyRequest = IncomingMessage & { rawBody?: Buffer };
 
@@ -16,5 +17,6 @@ function keepRawBodyAndRejectDeepJson(req: RawBodyRequest, _res: unknown, body: 
 export function configureApp(app: INestApplication): INestApplication {
   (app as NestExpressApplication).useBodyParser('json', { reviver: rejectNulReviver, verify: keepRawBodyAndRejectDeepJson });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalFilters(new TooManyRequestsFilter());
   return app;
 }

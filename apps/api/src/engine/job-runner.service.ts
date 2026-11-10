@@ -74,7 +74,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
   private async loop(): Promise<void> {
     while (this.running) {
       try {
-        const job = await this.queue.claimNext(this.workerId, this.config.leaseSeconds);
+        const job = await this.queue.claimNext(this.workerId, this.config.leaseSeconds, this.config.tenantMaxConcurrentJobs);
         if (!job) {
           await sleep(250);
           continue;

@@ -17,6 +17,12 @@ export interface ScheduledWorkflow {
   timezone: string;
 }
 
+export interface RateLimitHit {
+  limit: number;
+  hits: number;
+  resetAt: Date;
+}
+
 export interface ReapedJob {
   id: string;
   tenantId: string;
@@ -56,12 +62,17 @@ export class TenantDb {
     return this.dataSource.query('SELECT * FROM list_scheduled_workflows()');
   }
 
+  async hitRateLimit(tenantId: string, defaultLimit: number): Promise<RateLimitHit> {
+    const [row]: RateLimitHit[] = await this.dataSource.query('SELECT * FROM rate_limit_hit($1, $2)', [tenantId, defaultLimit]);
+    return row;
+  }
+
   reapExpiredJobs(): Promise<ReapedJob[]> {
     return this.dataSource.query('SELECT * FROM reap_expired_jobs()');
   }
 
-  async claimJob(workerId: string, leaseSeconds: number): Promise<Job | null> {
-    const rows: Job[] = await this.dataSource.query('SELECT * FROM claim_job($1, $2)', [workerId, leaseSeconds]);
+  async claimJob(workerId: string, leaseSeconds: number, defaultMaxRunning: number): Promise<Job | null> {
+    const rows: Job[] = await this.dataSource.query('SELECT * FROM claim_job($1, $2, $3)', [workerId, leaseSeconds, defaultMaxRunning]);
     return rows[0] ?? null;
   }
 }

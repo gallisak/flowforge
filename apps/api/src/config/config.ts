@@ -13,6 +13,8 @@ export interface ApiConfig {
   schedulerTickMs: number;
   webhookToleranceSeconds: number;
   webhookSecretGraceSeconds: number;
+  tenantRateLimitPerMinute: number;
+  tenantMaxQueuedJobs: number;
 }
 
 export interface WorkerConfig {
@@ -32,6 +34,7 @@ export interface WorkerConfig {
   httpMaxResponseBytes: number;
   stepOutputMaxBytes: number;
   ssrfAllowlist: readonly string[];
+  tenantMaxConcurrentJobs: number;
 }
 
 export interface MigrationConfig {
@@ -147,6 +150,8 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 30_000, 1_000, 3_600_000),
     webhookToleranceSeconds: read.integer('WEBHOOK_TOLERANCE_SECONDS', 300, 10, 3_600),
     webhookSecretGraceSeconds: read.integer('WEBHOOK_SECRET_GRACE_SECONDS', 86_400, 0, 2_592_000),
+    tenantRateLimitPerMinute: read.integer('TENANT_RATE_LIMIT_PER_MINUTE', 600, 1, 1_000_000),
+    tenantMaxQueuedJobs: read.integer('TENANT_MAX_QUEUED_JOBS', 10_000, 1, 10_000_000),
   });
 }
 
@@ -172,6 +177,7 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     httpMaxResponseBytes: read.integer('HTTP_MAX_RESPONSE_BYTES', 1_048_576, 1_024, 67_108_864),
     stepOutputMaxBytes: read.integer('STEP_OUTPUT_MAX_BYTES', 1_048_576, 1_024, 16_777_216),
     ssrfAllowlist: read.allowlist('SSRF_ALLOWLIST'),
+    tenantMaxConcurrentJobs: read.integer('TENANT_MAX_CONCURRENT_JOBS', 10, 1, 10_000),
   });
 }
 
