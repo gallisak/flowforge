@@ -48,6 +48,7 @@ reproduction of a finding fails before its fix and passes after it.
 | F-25 | API runs as a database superuser and accepts a placeholder admin token | `test/integration/findings/F-25-least-privilege.int-spec.ts` |
 | F-26 | A NUL character makes data impossible to store | `test/integration/findings/F-26-nul-characters.int-spec.ts` |
 | F-27 | Deeply nested JSON crashes the API and poisons steps | `test/integration/findings/F-27-deeply-nested-json.int-spec.ts` |
+| F-28 | One tenant's backlog delays every other tenant | `test/integration/findings/F-28-noisy-neighbour.int-spec.ts` |
 
 ## Changes to existing tests
 
