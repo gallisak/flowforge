@@ -14,6 +14,9 @@ export class Execution {
   @Column('uuid')
   workflowId: string;
 
+  @Column({ type: 'int', default: 1 })
+  workflowVersion: number;
+
   @Column({ type: 'varchar', default: 'pending' })
   status: ExecutionStatus;
 

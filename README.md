@@ -358,6 +358,29 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   workflow version taken at start (durable execution phase), so deleting a workflow will no longer
   affect executions that already started.
 
+### F-19 · A running execution picks up edits of its workflow · Execution properties · High
+
+- **What:** `apps/api/src/workflows/workflows.service.ts:45-48` increments `version` when the steps
+  change but keeps only the latest steps; executions do not record a version, and every attempt of a
+  job loads the *current* workflow (`apps/api/src/engine/job-runner.service.ts:54,60`).
+- **Why it is dangerous:** an execution started with one definition can continue with another: a
+  retry after an edit runs steps the user never ran this input through, may call different endpoints
+  and mixes outputs of two versions in `ctx.steps`. Nobody can tell afterwards which definition an
+  execution actually used.
+- **How to reproduce:** `apps/api/test/integration/findings/F-19-workflow-version-snapshot.int-spec.ts`:
+  version 1 fails on its second step, the steps are edited while the job waits for its retry, then the
+  retry runs. On the starter code the retry calls the endpoints of version 2. `scripts/prove-finding.sh F-19`.
+- **How it was fixed:** every create and every change of the steps writes an immutable row to
+  `workflow_versions` in the same transaction (the workflow row is locked, so concurrent edits get
+  distinct versions); enqueueing records `executions.workflowVersion` under a share lock on the workflow;
+  the worker reads the steps only from that snapshot. Deleting a workflow still cancels its unfinished
+  executions on purpose: deletion is an explicit user action, an edit is not. Tests:
+  `apps/api/test/integration/execution/workflow-versions.int-spec.ts`.
+- **Alternatives considered:** copying the steps into every execution (simple, but duplicates the
+  definition per run and loses the history of versions); refusing to edit a workflow with unfinished
+  executions (blocks users for as long as a delay step lasts); letting deletion run started executions
+  to the end (possible with snapshots, but surprising for a user who deletes a workflow to stop it).
+
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 
 - **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a

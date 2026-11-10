@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { TenantDb } from '../db/tenant-db.service';
-import { Workflow } from '../entities';
+import { Workflow, WorkflowVersion } from '../entities';
 import { validateSteps } from './definition';
 import { validateSchedule } from './schedule';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
@@ -21,8 +21,8 @@ export class WorkflowsService {
   create(tenantId: string, input: CreateWorkflowDto): Promise<Workflow> {
     const steps = validateSteps(input.steps);
     validateSchedule(input.cron ?? null, input.timezone ?? 'UTC');
-    return this.db.run(tenantId, (em) =>
-      em.save(
+    return this.db.run(tenantId, async (em) => {
+      const wf = await em.save(
         em.create(Workflow, {
           tenantId,
           name: input.name,
@@ -31,13 +31,15 @@ export class WorkflowsService {
           timezone: input.timezone ?? 'UTC',
           enabled: input.enabled ?? true,
         }),
-      ),
-    );
+      );
+      await this.recordVersion(em, wf);
+      return wf;
+    });
   }
 
   update(tenantId: string, id: string, input: UpdateWorkflowDto): Promise<Workflow> {
     return this.db.run(tenantId, async (em) => {
-      const wf = await this.findOwned(em, tenantId, id);
+      const wf = await this.findOwned(em, tenantId, id, true);
       validateSchedule(input.cron === undefined ? wf.cron : input.cron, input.timezone ?? wf.timezone);
       if (input.name !== undefined) wf.name = input.name;
       if (input.steps !== undefined) {
@@ -47,8 +49,14 @@ export class WorkflowsService {
       if (input.cron !== undefined) wf.cron = input.cron;
       if (input.timezone !== undefined) wf.timezone = input.timezone;
       if (input.enabled !== undefined) wf.enabled = input.enabled;
-      return em.save(wf);
+      const saved = await em.save(wf);
+      if (input.steps !== undefined) await this.recordVersion(em, saved);
+      return saved;
     });
+  }
+
+  private async recordVersion(em: EntityManager, wf: Workflow): Promise<void> {
+    await em.insert(WorkflowVersion, { tenantId: wf.tenantId, workflowId: wf.id, version: wf.version, steps: wf.steps });
   }
 
   remove(tenantId: string, id: string): Promise<void> {
@@ -58,8 +66,11 @@ export class WorkflowsService {
     });
   }
 
-  private async findOwned(em: EntityManager, tenantId: string, id: string): Promise<Workflow> {
-    const wf = await em.findOne(Workflow, { where: { id, tenantId } });
+  private async findOwned(em: EntityManager, tenantId: string, id: string, forUpdate = false): Promise<Workflow> {
+    const wf = await em.findOne(Workflow, {
+      where: { id, tenantId },
+      ...(forUpdate ? { lock: { mode: 'pessimistic_write' as const } } : {}),
+    });
     if (!wf) throw new NotFoundException('Workflow not found');
     return wf;
   }

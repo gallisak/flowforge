@@ -1,8 +1,8 @@
 import { DataSourceOptions } from 'typeorm';
-import { Execution, Job, StepRun, Tenant, Workflow } from '../entities';
+import { Execution, Job, StepRun, Tenant, Workflow, WorkflowVersion } from '../entities';
 import { migrations } from '../migrations';
 
-export const entities = [Tenant, Workflow, Execution, StepRun, Job];
+export const entities = [Tenant, Workflow, WorkflowVersion, Execution, StepRun, Job];
 
 export interface DatabaseTimeouts {
   connectTimeoutMs: number;

@@ -3,7 +3,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { hashApiKey } from '../../src/auth/api-key.guard';
 import { dataSourceOptions } from '../../src/db/data-source';
-import { StepDefinition, Tenant, Workflow } from '../../src/entities';
+import { StepDefinition, Tenant, Workflow, WorkflowVersion } from '../../src/entities';
 import { DB_ROLES, TEMPLATE_DB, withCredentials, withDatabase } from './schema';
 
 export interface TestDatabase {
@@ -72,5 +72,7 @@ export async function seedWorkflow(
   extra: Partial<Workflow> = {},
 ): Promise<Workflow> {
   const repo = ds.getRepository(Workflow);
-  return repo.save(repo.create({ tenantId, name: 'test-workflow', steps, ...extra }));
+  const workflow = await repo.save(repo.create({ tenantId, name: 'test-workflow', steps, ...extra }));
+  await ds.getRepository(WorkflowVersion).insert({ tenantId, workflowId: workflow.id, version: workflow.version, steps });
+  return workflow;
 }

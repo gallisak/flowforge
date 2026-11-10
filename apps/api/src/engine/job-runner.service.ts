@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
-import { Execution, Job, StepRun, Workflow } from '../entities';
+import { Execution, Job, StepRun, Workflow, WorkflowVersion } from '../entities';
 import { JobQueueService } from './job-queue.service';
 import { StepError, StepExecutor } from './step-executor';
 import { StepContext } from './template';
@@ -130,14 +130,19 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     try {
       const execution = await inTenant((em) => em.findOne(Execution, { where: { id: job.executionId } }));
       if (!execution) throw new StepError('the execution of this job no longer exists', false);
-      const workflow = await inTenant((em) => em.findOne(Workflow, { where: { id: execution.workflowId } }));
-      if (!workflow) throw new StepError('the workflow of this execution was deleted', false);
+      const workflowExists = await inTenant((em) => em.exists(Workflow, { where: { id: execution.workflowId } }));
+      if (!workflowExists) throw new StepError('the workflow of this execution was deleted', false);
+      const snapshot = await inTenant((em) =>
+        em.findOne(WorkflowVersion, { where: { workflowId: execution.workflowId, version: execution.workflowVersion } }),
+      );
+      if (!snapshot) throw new StepError(`version ${execution.workflowVersion} of the workflow is missing`, false);
+      const steps = snapshot.steps;
 
       await inTenant((em) => em.update(Execution, execution.id, { status: 'running' }));
       const ctx: StepContext = { input: execution.input, steps: {} };
 
-      for (let i = 0; i < workflow.steps.length; i++) {
-        const step = workflow.steps[i];
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
         signal?.throwIfAborted();
         const run = await inTenant((em) =>
           em.save(em.create(StepRun, { tenantId: job.tenantId, executionId: execution.id, stepIndex: i, stepId: step.id })),
@@ -151,7 +156,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
           throw err;
         }
       }
-      const last = workflow.steps[workflow.steps.length - 1];
+      const last = steps[steps.length - 1];
       const completed = await this.queue.complete(job, this.workerId, {
         status: 'succeeded',
         output: ctx.steps[last.id] as object,
