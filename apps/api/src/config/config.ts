@@ -25,6 +25,9 @@ export interface WorkerConfig {
   retryCapMs: number;
   transformTimeoutMs: number;
   transformMemoryMb: number;
+  httpTimeoutMs: number;
+  httpMaxRedirects: number;
+  ssrfAllowlist: readonly string[];
 }
 
 export interface MigrationConfig {
@@ -43,6 +46,7 @@ export class ConfigError extends Error {
 const NODE_ENVS: readonly NodeEnv[] = ['development', 'test', 'production'];
 const PRODUCTION_ADMIN_TOKEN_MIN_LENGTH = 32;
 const ADMIN_TOKEN_MIN_LENGTH = 8;
+const ALLOWLIST_ENTRY = /^(\[[0-9a-f:.]+\]|[a-z0-9-]+(\.[a-z0-9-]+)*\.?)(:\d{1,5})?$/;
 
 class EnvReader {
   readonly problems: string[] = [];
@@ -111,6 +115,16 @@ class EnvReader {
     return token;
   }
 
+  allowlist(name: string): string[] {
+    const entries = (this.env[name] ?? '')
+      .split(',')
+      .map((entry) => entry.trim().toLowerCase())
+      .filter((entry) => entry.length > 0);
+    const invalid = entries.filter((entry) => !ALLOWLIST_ENTRY.test(entry));
+    if (invalid.length > 0) this.problems.push(`${name} entries must look like host or host:port`);
+    return entries;
+  }
+
   done<T>(config: T): T {
     if (this.problems.length > 0) throw new ConfigError(this.problems);
     return Object.freeze(config);
@@ -147,6 +161,9 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     retryCapMs,
     transformTimeoutMs: read.integer('TRANSFORM_TIMEOUT_MS', 100, 10, 10_000),
     transformMemoryMb: read.integer('TRANSFORM_MEMORY_MB', 32, 4, 512),
+    httpTimeoutMs: read.integer('HTTP_TIMEOUT_MS', 15_000, 100, 120_000),
+    httpMaxRedirects: read.integer('HTTP_MAX_REDIRECTS', 5, 0, 10),
+    ssrfAllowlist: read.allowlist('SSRF_ALLOWLIST'),
   });
 }
 

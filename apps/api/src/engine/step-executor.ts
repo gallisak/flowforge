@@ -1,6 +1,13 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { StepDefinition } from '../entities';
+import {
+  findDestinationError,
+  InvalidRequestUrlError,
+  SafeHttpClient,
+  SafeHttpResponse,
+  TooManyRedirectsError,
+} from './http/safe-http';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from './sandbox/transform-sandbox';
 import { renderTemplate, StepContext } from './template';
 
@@ -29,11 +36,17 @@ const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 const MAX_SANDBOX_THREADS = 4;
 
 @Injectable()
-export class StepExecutor implements OnModuleDestroy {
+export class StepExecutor implements OnApplicationShutdown {
   private readonly logger = new Logger(StepExecutor.name);
   private readonly sandbox: TransformSandbox;
+  private readonly httpClient: SafeHttpClient;
 
   constructor(@Inject(WORKER_CONFIG) config: WorkerConfig) {
+    this.httpClient = new SafeHttpClient({
+      allowlist: config.ssrfAllowlist,
+      timeoutMs: config.httpTimeoutMs,
+      maxRedirects: config.httpMaxRedirects,
+    });
     this.sandbox = new TransformSandbox(
       {
         timeoutMs: config.transformTimeoutMs,
@@ -44,8 +57,8 @@ export class StepExecutor implements OnModuleDestroy {
     );
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await this.sandbox.close();
+  async onApplicationShutdown(): Promise<void> {
+    await Promise.all([this.sandbox.close(), this.httpClient.close()]);
   }
 
   async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
@@ -78,28 +91,34 @@ export class StepExecutor implements OnModuleDestroy {
     );
     if (idempotencyKey) headers[IDEMPOTENCY_HEADER] = idempotencyKey;
     const url = renderTemplate(step.url, ctx);
-    let res: Response;
-    let text: string;
+    let res: SafeHttpResponse;
     try {
-      res = await fetch(url, {
+      res = await this.httpClient.request(url, {
         method: step.method ?? 'GET',
         headers,
         body: step.body !== undefined ? renderTemplate(step.body, ctx) : undefined,
-        signal: signal ? AbortSignal.any([AbortSignal.timeout(15_000), signal]) : AbortSignal.timeout(15_000),
+        signal,
       });
-      text = await res.text();
     } catch (err) {
       if (signal?.aborted) throw signal.reason;
-      const timedOut = (err as Error).name === 'TimeoutError';
-      throw new StepError(timedOut ? 'http request timed out' : 'http request failed: connection error', true);
+      throw this.httpFailure(err);
     }
-    if (!res.ok) {
+    if (res.status < 200 || res.status > 299) {
       throw new StepError(`http ${res.status}`, isRetryableStatus(res.status));
     }
     try {
-      return { status: res.status, body: JSON.parse(text) };
+      return { status: res.status, body: JSON.parse(res.body) };
     } catch {
-      return { status: res.status, body: text.slice(0, 10_000) };
+      return { status: res.status, body: res.body.slice(0, 10_000) };
     }
+  }
+
+  private httpFailure(err: unknown): StepError {
+    const blocked = findDestinationError(err);
+    if (blocked) return new StepError(blocked.message, false);
+    if (err instanceof InvalidRequestUrlError || err instanceof TooManyRedirectsError) return new StepError(err.message, false);
+    const name = (err as Error).name;
+    const timedOut = name === 'TimeoutError' || name === 'HeadersTimeoutError' || name === 'BodyTimeoutError';
+    return new StepError(timedOut ? 'http request timed out' : 'http request failed: connection error', true);
   }
 }
