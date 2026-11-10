@@ -15,14 +15,15 @@ import { WorkflowsService } from './workflows/workflows.service';
 
 export const entities = [Tenant, Workflow, Execution, StepRun, Job];
 
-export const databaseModule = TypeOrmModule.forRoot({
-  type: 'postgres',
-  url: process.env.DATABASE_URL,
-  entities,
-  synchronize: true,
+export const databaseModule = TypeOrmModule.forRootAsync({
+  useFactory: () => ({
+    type: 'postgres',
+    url: process.env.DATABASE_URL,
+    entities,
+    synchronize: true,
+  }),
 });
 
-/** HTTP API + планувальник. */
 @Module({
   imports: [databaseModule, TypeOrmModule.forFeature(entities)],
   controllers: [TenantsController, WorkflowsController, ExecutionsController, WebhooksController],
@@ -30,7 +31,6 @@ export const databaseModule = TypeOrmModule.forRoot({
 })
 export class AppModule {}
 
-/** Окремий процес-воркер без HTTP. */
 @Module({
   imports: [databaseModule, TypeOrmModule.forFeature(entities)],
   providers: [JobQueueService, JobRunnerService, StepExecutor],

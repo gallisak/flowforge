@@ -2,6 +2,9 @@
   "name": "flowforge-api",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "nest build",
     "start": "node dist/main",
@@ -9,7 +12,9 @@
     "start:dev": "nest start --watch",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "jest"
+    "test": "jest",
+    "test:unit": "jest --selectProjects unit",
+    "test:int": "jest --selectProjects integration"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.0",
@@ -28,20 +33,20 @@
     "@nestjs/cli": "^10.3.0",
     "@nestjs/schematics": "^10.1.0",
     "@nestjs/testing": "^10.3.0",
+    "@testcontainers/postgresql": "^12.2.1",
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.12",
     "@types/node": "^20.11.0",
+    "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.56.0",
     "jest": "^29.7.0",
+    "supertest": "^7.3.2",
+    "testcontainers": "^12.2.1",
     "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
-  },
-  "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
-    "rootDir": ".",
-    "testRegex": "(/test/.*|\\.(test|spec))\\.ts$",
-    "transform": { "^.+\\.(t|j)s$": "ts-jest" }
   }
 }

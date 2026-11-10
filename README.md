@@ -1,44 +1,44 @@
-# FlowForge — стартовий репозиторій
+# FlowForge — starter repository
 
-Мультитенантна платформа автоматизації: користувач описує workflow як послідовність кроків
-(`http`, `transform`, `log`, `delay`), запускає його вручну, за webhook-ом або за cron-розкладом,
-а воркери виконують кроки з черги в Postgres.
+A multi-tenant automation platform: a user describes a workflow as a sequence of steps
+(`http`, `transform`, `log`, `delay`), runs it manually, via a webhook or on a cron schedule,
+and workers execute the steps from a queue in Postgres.
 
-## Склад
+## Layout
 
-- `apps/api` — NestJS: HTTP API (`main.ts`), планувальник cron (працює в API-процесі),
-  окремий процес-воркер (`worker.ts`).
-- `apps/frontend` — Next.js (App Router): ввід API-ключа, список workflow, сторінка виконання.
-- `docker-compose.yml` — Postgres, API, два воркери, фронтенд.
+- `apps/api` — NestJS: HTTP API (`main.ts`), cron scheduler (runs inside the API process),
+  separate worker process (`worker.ts`).
+- `apps/frontend` — Next.js (App Router): API key input, workflow list, execution page.
+- `docker-compose.yml` — Postgres, API, two workers, frontend.
 
-## Запуск
+## Running
 
 ```bash
 docker-compose up --build
 ```
 
-- API: http://localhost:3000, фронтенд: http://localhost:3001
+- API: http://localhost:3000, frontend: http://localhost:3001
 
-Створити тенанта (токен — `ADMIN_TOKEN` з `apps/api/.env.example`):
+Create a tenant (the token is `ADMIN_TOKEN` from `apps/api/.env.example`):
 
 ```bash
 curl -X POST localhost:3000/tenants -H 'x-admin-token: change-me-admin' \
   -H 'content-type: application/json' -d '{"name":"acme"}'
 ```
 
-Відповідь містить `apiKey` (показується один раз) і `webhookSecret`. Далі всі запити —
-із заголовком `x-api-key`.
+The response contains `apiKey` (shown only once) and `webhookSecret`. All further requests
+use the `x-api-key` header.
 
-## Основні ендпоінти
+## Main endpoints
 
-| Метод | Шлях | Опис |
+| Method | Path | Description |
 |---|---|---|
-| POST/GET/PATCH/DELETE | `/workflows[/:id]` | керування workflow |
-| POST | `/workflows/:id/run` | запуск вручну (тіло — input) |
-| GET | `/executions`, `/executions/:id` | виконання та їхні кроки |
-| POST | `/hooks/:workflowId` | вхідний webhook, підпис у `x-signature` (HMAC-SHA256 hex) |
+| POST/GET/PATCH/DELETE | `/workflows[/:id]` | manage workflows |
+| POST | `/workflows/:id/run` | run manually (body is the input) |
+| GET | `/executions`, `/executions/:id` | executions and their steps |
+| POST | `/hooks/:workflowId` | incoming webhook, signature in `x-signature` (HMAC-SHA256 hex) |
 
-Приклад workflow:
+Example workflow:
 
 ```json
 {
@@ -50,15 +50,15 @@ curl -X POST localhost:3000/tenants -H 'x-admin-token: change-me-admin' \
 }
 ```
 
-## Тести
+## Tests
 
 ```bash
 cd apps/api && npm install && npm test
 ```
 
-Не всі тести однаково надійні, а частина поведінки ще не покрита.
+Not all tests are equally reliable, and part of the behaviour is not covered yet.
 
-## Що відомо про стан коду
+## Known state of the code
 
-- Базовий функціонал працює, але система ще не готова до продакшену.
-- `synchronize: true` у TypeORM залишено для простоти старту; міграцій немає.
+- Basic functionality works, but the system is not production-ready yet.
+- `synchronize: true` in TypeORM is kept for a simpler start; there are no migrations.

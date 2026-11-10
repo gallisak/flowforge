@@ -24,7 +24,6 @@ export class Workflow {
   @Column({ default: true })
   enabled: boolean;
 
-  /** 5- або 6-польний cron; null — без розкладу. */
   @Column({ type: 'varchar', nullable: true })
   cron: string | null;
 

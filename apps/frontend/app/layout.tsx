@@ -4,7 +4,7 @@ export const metadata = { title: 'FlowForge' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="uk">
+    <html lang="en">
       <body style={{ fontFamily: 'system-ui, sans-serif', margin: 0 }}>
         <nav style={{ display: 'flex', gap: 16, padding: '12px 24px', borderBottom: '1px solid #ddd' }}>
           <strong>FlowForge</strong>

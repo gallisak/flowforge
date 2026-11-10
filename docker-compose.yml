@@ -5,7 +5,7 @@ services:
       POSTGRES_USER: flowforge
       POSTGRES_PASSWORD: flowforge
       POSTGRES_DB: flowforge
-    ports: ['5432:5432']
+    ports: ['${PG_PORT:-5432}:5432']
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U flowforge']
@@ -17,11 +17,14 @@ services:
     env_file: ./apps/api/.env.example
     depends_on:
       postgres: { condition: service_healthy }
-    ports: ['3000:3000']
+    init: true
+    ports: ['${API_PORT:-3000}:3000']
 
   worker:
     build: ./apps/api
     command: ['node', 'dist/worker']
+    init: true
+    stop_grace_period: 30s
     env_file: ./apps/api/.env.example
     depends_on:
       postgres: { condition: service_healthy }
@@ -33,7 +36,8 @@ services:
     environment:
       API_URL: http://api:3000
     depends_on: [api]
-    ports: ['3001:3000']
+    init: true
+    ports: ['${WEB_PORT:-3001}:3000']
 
 volumes:
   pgdata:

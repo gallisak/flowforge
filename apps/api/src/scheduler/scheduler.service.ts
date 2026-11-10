@@ -25,7 +25,6 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** Створює execution для кожного cron-спрацювання з моменту попереднього тіку. */
   async tick(now = new Date()): Promise<number> {
     const scheduled = await this.workflows
       .createQueryBuilder('w')
@@ -41,7 +40,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
           fired++;
         }
       } catch (err) {
-        this.logger.warn(`workflow ${wf.id}: невалідний cron (${(err as Error).message})`);
+        this.logger.warn(`workflow ${wf.id}: invalid cron (${(err as Error).message})`);
       }
     }
     this.lastTick = now;

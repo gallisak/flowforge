@@ -15,11 +15,11 @@ export default function ExecutionPage({ params }: { params: { id: string } }) {
     }, 1000);
   }, [params.id]);
 
-  if (!execution) return <p>Завантаження…</p>;
+  if (!execution) return <p>Loading…</p>;
   return (
     <>
       <h1>Execution {execution.id.slice(0, 8)}</h1>
-      <p>Статус: {execution.status}</p>
+      <p>Status: {execution.status}</p>
       {execution.error && <p style={{ color: 'crimson' }}>{execution.error}</p>}
       <ol>
         {execution.steps.map((s) => (

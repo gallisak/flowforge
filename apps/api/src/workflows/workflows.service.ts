@@ -22,7 +22,7 @@ export class WorkflowsService {
 
   async get(tenantId: string, id: string): Promise<Workflow> {
     const wf = await this.workflows.findOne({ where: { id, tenantId } });
-    if (!wf) throw new NotFoundException('Workflow не знайдено');
+    if (!wf) throw new NotFoundException('Workflow not found');
     return wf;
   }
 

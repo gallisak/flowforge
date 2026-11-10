@@ -5,10 +5,6 @@ import { Repository } from 'typeorm';
 import { Tenant, Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
 
-/**
- * Вхідні webhook-и. Підпис: hex HMAC-SHA256 від тіла запиту
- * секретом тенанта, у заголовку x-signature.
- */
 @Controller('hooks')
 export class WebhooksController {
   constructor(
@@ -30,7 +26,7 @@ export class WebhooksController {
 
     const expected = createHmac('sha256', tenant.webhookSecret).update(JSON.stringify(body)).digest('hex');
     if (signature !== expected) {
-      throw new UnauthorizedException('Невірний підпис');
+      throw new UnauthorizedException('Invalid signature');
     }
 
     const execution = await this.executions.enqueue(workflow, body, 'webhook');
