@@ -14,21 +14,6 @@ export function isRetryableStatus(status: number): boolean {
   return status >= 500 || RETRYABLE_CLIENT_STATUSES.has(status);
 }
 
-function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 @Injectable()
 export class StepExecutor {
   private readonly logger = new Logger(StepExecutor.name);
@@ -39,8 +24,7 @@ export class StepExecutor {
         this.logger.log(renderTemplate(step.message, ctx));
         return { logged: true };
       case 'delay':
-        await abortableDelay(step.ms, signal);
-        return { waitedMs: step.ms };
+        throw new StepError('delay steps are durable timers scheduled by the job runner', false);
       case 'transform':
         return this.transform(step.expr, ctx);
       case 'http':

@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-export type ExecutionStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+export type ExecutionStatus = 'pending' | 'running' | 'waiting' | 'succeeded' | 'failed';
 
 @Entity('executions')
 @Index(['tenantId', 'createdAt'])

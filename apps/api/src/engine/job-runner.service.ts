@@ -134,6 +134,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
 
       const checkpoints = await inTenant((em) => em.find(StepRun, { where: { executionId: execution.id } }));
       const succeeded = new Map(checkpoints.filter((r) => r.status === 'succeeded').map((r) => [r.stepIndex, r]));
+      const waiting = new Set(checkpoints.filter((r) => r.status === 'waiting').map((r) => r.stepIndex));
 
       await inTenant((em) => em.update(Execution, execution.id, { status: 'running' }));
       const ctx: StepContext = { input: execution.input, steps: {} };
@@ -146,6 +147,15 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         if (succeeded.has(i)) continue;
         const step = steps[i];
         signal?.throwIfAborted();
+        if (step.type === 'delay') {
+          const output = { waitedMs: step.ms };
+          if (waiting.has(i) && (await this.queue.wakeUp(job, this.workerId, i, output)) === 'resumed') {
+            ctx.steps[step.id] = output;
+            continue;
+          }
+          if (!waiting.has(i)) await this.queue.sleep(job, this.workerId, i, step.id, step.ms);
+          return;
+        }
         const stepRunId = await this.queue.startStep(job, this.workerId, i, step.id);
         let output: unknown;
         try {

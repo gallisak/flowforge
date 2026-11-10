@@ -129,6 +129,45 @@ export class JobQueueService {
     });
   }
 
+  sleep(job: Job, workerId: string, stepIndex: number, stepId: string, ms: number): Promise<void> {
+    return this.withOwnership(job, workerId, async (em) => {
+      await em.query(
+        `INSERT INTO step_runs ("tenantId", "executionId", "stepIndex", "stepId", "status", "attempts", "startedAt", "wakeAt")
+         VALUES ($1, $2, $3, $4, 'waiting', 1, now(), now() + make_interval(secs => $5))
+         ON CONFLICT ("executionId", "stepIndex") DO UPDATE
+            SET "status" = 'waiting', "attempts" = step_runs."attempts" + 1, "startedAt" = now(),
+                "wakeAt" = EXCLUDED."wakeAt", "error" = NULL, "finishedAt" = NULL`,
+        [job.tenantId, job.executionId, stepIndex, stepId, ms / 1000],
+      );
+      await this.parkUntilWakeUp(em, job, stepIndex);
+    });
+  }
+
+  wakeUp(job: Job, workerId: string, stepIndex: number, output: unknown): Promise<'resumed' | 'sleeping'> {
+    return this.withOwnership(job, workerId, async (em) => {
+      const due: unknown[] = await em.query(
+        `UPDATE step_runs SET "status" = 'succeeded', "output" = $3::jsonb, "finishedAt" = now()
+          WHERE "executionId" = $1 AND "stepIndex" = $2 AND "status" = 'waiting' AND "wakeAt" <= now()
+          RETURNING id`,
+        [job.executionId, stepIndex, JSON.stringify(output)],
+      );
+      if (due.length === 1) return 'resumed';
+      await this.parkUntilWakeUp(em, job, stepIndex);
+      return 'sleeping';
+    });
+  }
+
+  private async parkUntilWakeUp(em: EntityManager, job: Job, stepIndex: number): Promise<void> {
+    await em.query(
+      `UPDATE jobs SET "status" = 'queued', "lockedBy" = NULL, "lockedUntil" = NULL,
+              "attempts" = "attempts" - 1,
+              "runAt" = (SELECT s."wakeAt" FROM step_runs s WHERE s."executionId" = $2 AND s."stepIndex" = $3)
+        WHERE id = $1`,
+      [job.id, job.executionId, stepIndex],
+    );
+    await em.update(Execution, job.executionId, { status: 'waiting' });
+  }
+
   release(job: Job, workerId: string): Promise<boolean> {
     return this.db.run(job.tenantId, async (em) => {
       const result = await em.update(Job, this.ownedBy(job, workerId), {

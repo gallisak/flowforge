@@ -409,6 +409,30 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   executions (blocks users for as long as a delay step lasts); letting deletion run started executions
   to the end (possible with snapshots, but surprising for a user who deletes a workflow to stop it).
 
+### F-20 · A delay holds a worker slot and restarts after a crash · Execution properties · High
+
+- **What:** `apps/api/src/engine/step-executor.ts:20-22` implements `delay` as an in-memory
+  `setTimeout` inside the job, for up to an hour.
+- **Why it is dangerous:** every waiting execution occupies a worker slot, so a handful of long delays
+  stalls the queue for all tenants; the lease (60 s) is far shorter than the delay, so the job looks
+  abandoned; a restart or crash loses the timer, and the delay starts again from zero together with
+  every step before it.
+- **How to reproduce:** `apps/api/test/integration/findings/F-20-durable-delay.int-spec.ts`: a worker
+  with one slot must run another execution while the first one waits; the job must be released with a
+  stored wake-up time; a worker killed with `SIGKILL` in the middle of a 3 s delay must not restart it.
+  On the starter code the second execution waits, nothing is stored, and after the crash the next
+  step runs 5.2 s after the previous one. `scripts/prove-finding.sh F-20`.
+- **How it was fixed:** a delay is a durable timer. Starting it writes, in one fenced transaction, a
+  `waiting` checkpoint with `wakeAt = now() + ms`, sets the execution to `waiting` and puts the job back
+  in the queue with `runAt = wakeAt` without counting an attempt; the worker slot is free immediately.
+  When the job is claimed again the step completes only if `wakeAt` has passed according to the
+  database clock; a job picked up early (for example after a shutdown release) goes back to sleep until
+  the same `wakeAt`. Tests: `apps/api/test/integration/execution/durable-timers.int-spec.ts`.
+- **Alternatives considered:** a separate `timers` table polled by a scheduler (one more moving part;
+  the queue's `runAt` already is a durable timer); keeping short delays in memory below a threshold
+  (two behaviours for one step type and still lost on crash); `pg_sleep` in the database (holds a
+  connection instead of a slot).
+
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 
 - **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a

@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-export type StepRunStatus = 'running' | 'succeeded' | 'failed';
+export type StepRunStatus = 'running' | 'waiting' | 'succeeded' | 'failed';
 
 @Entity('step_runs')
 @Index('UQ_step_runs_execution_step', ['executionId', 'stepIndex'], { unique: true })
@@ -34,6 +34,9 @@ export class StepRun {
 
   @CreateDateColumn()
   startedAt: Date;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  wakeAt: Date | null;
 
   @Column({ type: 'timestamptz', nullable: true })
   finishedAt: Date | null;

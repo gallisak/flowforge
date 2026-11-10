@@ -5,6 +5,7 @@ import { JobLeaseRecovery1794308604391 } from './1794308604391-job-lease-recover
 import { AtomicLeaseReaper1794311016857 } from './1794311016857-atomic-lease-reaper';
 import { WorkflowVersionSnapshots1794312361041 } from './1794312361041-workflow-version-snapshots';
 import { StepCheckpoints1794312587199 } from './1794312587199-step-checkpoints';
+import { DurableDelay1794312901450 } from './1794312901450-durable-delay';
 
 export const migrations = [
   Baseline1794305090749,
@@ -14,4 +15,5 @@ export const migrations = [
   AtomicLeaseReaper1794311016857,
   WorkflowVersionSnapshots1794312361041,
   StepCheckpoints1794312587199,
+  DurableDelay1794312901450,
 ];
