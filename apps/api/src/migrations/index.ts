@@ -9,6 +9,7 @@ import { DurableDelay1794312901450 } from './1794312901450-durable-delay';
 import { StepIdempotencyKeys1794313078517 } from './1794313078517-step-idempotency-keys';
 import { ExecutionTriggerKeys1794320000000 } from './1794320000000-execution-trigger-keys';
 import { WebhookSecretRotation1794320100000 } from './1794320100000-webhook-secret-rotation';
+import { FairJobClaim1794320200000 } from './1794320200000-fair-job-claim';
 
 export const migrations = [
   Baseline1794305090749,
@@ -22,4 +23,5 @@ export const migrations = [
   StepIdempotencyKeys1794313078517,
   ExecutionTriggerKeys1794320000000,
   WebhookSecretRotation1794320100000,
+  FairJobClaim1794320200000,
 ];

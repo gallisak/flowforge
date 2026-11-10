@@ -4,6 +4,7 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'dead';
 
 @Entity('jobs')
 @Index(['status', 'runAt'])
+@Index('IDX_jobs_queued_by_tenant', ['tenantId', 'runAt'], { where: `"status" = 'queued'` })
 export class Job {
   @PrimaryGeneratedColumn('uuid')
   id: string;
