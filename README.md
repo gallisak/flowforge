@@ -70,6 +70,11 @@ instead of starting half-configured. Error messages never contain secret values.
 | `ADMIN_TOKEN` | api | — | required; at least 8 characters, in production at least 32 random characters |
 | `WORKER_CONCURRENCY` | worker | `4` | integer 1..64 |
 | `SCHEDULER_TICK_MS` | api | `30000` | integer 1000..3600000 |
+| `WORKER_LEASE_SECONDS` | worker | `30` | integer 2..3600; heartbeat every third of it |
+| `WORKER_REAPER_INTERVAL_MS` | worker | `5000` | integer 100..600000 |
+| `WORKER_SHUTDOWN_GRACE_MS` | worker | `25000` | integer 0..600000; keep below the container stop timeout |
+| `RETRY_BASE_MS` | worker | `1000` | integer 10..600000 |
+| `RETRY_CAP_MS` | worker | `300000` | integer, not smaller than `RETRY_BASE_MS` |
 
 ## Database
 
@@ -121,6 +126,55 @@ Limitations: row level security protects against bugs in the application, not ag
 injection, because injected SQL could set `app.tenant_id` itself; queries stay parameterised. The
 migration role owns the tables and therefore bypasses the policies; it is used only by `migrate`.
 Each tenant operation is its own short transaction, which costs one extra round trip.
+
+## Job queue
+
+The queue is the `jobs` table. One job drives one execution.
+
+```
+                  claim_job (SKIP LOCKED)            complete (fenced)
+  queued ─────────────────────────────▶ running ─────────────────────▶ done
+    ▲  ▲                                 │  │  │
+    │  └──── retryable error, attempts   │  │  └─ non-retryable error ──▶ failed
+    │        left: runAt = now + backoff │  └──── retryable error, no attempts left ──▶ dead
+    │                                    │
+    └──── shutdown release / lease expired (reaper) ── lease expired, no attempts left ──▶ dead
+```
+
+- **Claiming** — `claim_job(worker, lease)` selects the oldest due job with `FOR UPDATE SKIP LOCKED`
+  and marks it `running` in the same statement, so concurrent workers never get the same job and
+  never wait for each other. It increments `attempts`, which also serves as a fencing token.
+- **Lease and heartbeat** — a claimed job is owned until `lockedUntil`. The worker extends it every
+  third of `WORKER_LEASE_SECONDS`; if an extension fails, ownership is gone and the running step is
+  aborted.
+- **Recovery** — every worker runs `reap_expired_jobs()` every `WORKER_REAPER_INTERVAL_MS`: jobs whose
+  lease expired go back to `queued`, or to `dead` when they have no attempts left (a job that crashes
+  its worker every time cannot loop forever).
+- **Fencing** — extending, completing, failing and releasing a job are conditional on the same
+  `lockedBy` and `attempts`; completion updates the job and its execution in one transaction. A worker
+  that lost its lease cannot overwrite the result of the worker that took over.
+- **Retries** — errors are classified: HTTP 5xx, 408, 425, 429, connection errors and timeouts are
+  retryable; other 4xx, invalid expressions and missing workflows are not. A retryable failure is
+  rescheduled after `random(base, min(cap, base · 2^attempt))` ms (exponential backoff with jitter, so
+  jobs that failed together do not retry together); after `maxAttempts` the job becomes `dead`. A
+  non-retryable failure goes straight to `failed`. In both cases the execution is `failed` with the
+  error.
+- **Graceful shutdown** — on `SIGTERM` the worker stops claiming, waits up to
+  `WORKER_SHUTDOWN_GRACE_MS` for running jobs, then aborts the rest and releases them to `queued`
+  without counting the attempt.
+
+| Option | Verdict |
+|---|---|
+| `SELECT ... FOR UPDATE SKIP LOCKED` + lease columns | **Chosen**: one statement, state visible in the table, survives any process crash, indexable. |
+| `FOR UPDATE` without `SKIP LOCKED` | Correct but serialises all workers on the head of the queue. |
+| Optimistic `UPDATE ... WHERE status = 'queued'` | Correct, but under contention most claims lose and retry. |
+| Session advisory locks as ownership | Released automatically on disconnect, but invisible in the table and requires holding a connection for the whole job. |
+| `LISTEN/NOTIFY` as the queue | Not durable; useful only as a wake-up signal. |
+| Redis / RabbitMQ | Out of scope by the task: the queue must live in Postgres. |
+
+Limitations at this point: a retry still re-runs the workflow from the first step and steps are not
+idempotent yet (addressed by durable execution); claim order is global FIFO by `runAt` (per-tenant
+fairness comes with tenant limits); idle workers poll every 250 ms.
 
 ## Tests
 

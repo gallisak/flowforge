@@ -159,7 +159,10 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         return;
       }
       const retryable = err instanceof StepError ? err.retryable : true;
-      await this.queue.fail(job, this.workerId, (err as Error).message, retryable);
+      await this.queue.fail(job, this.workerId, (err as Error).message, retryable, {
+        baseMs: this.config.retryBaseMs,
+        capMs: this.config.retryCapMs,
+      });
     }
   }
 }

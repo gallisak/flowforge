@@ -3,12 +3,27 @@ import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity
 import { ReapedJob, TenantDb } from '../db/tenant-db.service';
 import { Execution, Job } from '../entities';
 
+export interface RetryPolicy {
+  baseMs: number;
+  capMs: number;
+}
+
+export function retryCeilingMs(attempt: number, policy: RetryPolicy): number {
+  return Math.min(policy.capMs, policy.baseMs * 2 ** attempt);
+}
+
+export function retryDelayMs(attempt: number, policy: RetryPolicy, random: () => number = Math.random): number {
+  const ceiling = retryCeilingMs(attempt, policy);
+  const floor = Math.min(policy.baseMs, ceiling);
+  return Math.round(floor + random() * (ceiling - floor));
+}
+
 export function backoffMs(attempt: number): number {
-  return Math.pow(2, attempt) * 1000;
+  return retryCeilingMs(attempt, { baseMs: 1000, capMs: Number.POSITIVE_INFINITY });
 }
 
 export type ExecutionUpdate = QueryDeepPartialEntity<Execution>;
-export type FailOutcome = 'retry' | 'failed' | 'lost';
+export type FailOutcome = 'retry' | 'failed' | 'dead' | 'lost';
 
 const intervalFromNow = (seconds: number) => () => `now() + make_interval(secs => ${Number(seconds)})`;
 
@@ -40,27 +55,29 @@ export class JobQueueService {
     });
   }
 
-  fail(job: Job, workerId: string, error: string, retryable: boolean): Promise<FailOutcome> {
-    const retry = retryable && job.attempts < job.maxAttempts;
+  fail(job: Job, workerId: string, error: string, retryable: boolean, policy: RetryPolicy): Promise<FailOutcome> {
+    const outcome: Exclude<FailOutcome, 'lost'> = !retryable ? 'failed' : job.attempts < job.maxAttempts ? 'retry' : 'dead';
     return this.db.run(job.tenantId, async (em) => {
+      const released = { lockedBy: null, lockedUntil: null, lastError: error };
       const result = await em.update(
         Job,
         this.ownedBy(job, workerId),
-        retry
-          ? {
-              status: 'queued',
-              lockedBy: null,
-              lockedUntil: null,
-              lastError: error,
-              runAt: intervalFromNow(backoffMs(job.attempts) / 1000),
-            }
-          : { status: 'failed', lockedBy: null, lockedUntil: null, lastError: error },
+        outcome === 'retry'
+          ? { ...released, status: 'queued', runAt: intervalFromNow(retryDelayMs(job.attempts, policy) / 1000) }
+          : { ...released, status: outcome },
       );
       if (result.affected !== 1) return 'lost';
-      if (!retry) {
+      if (outcome === 'failed') {
         await em.update(Execution, job.executionId, { status: 'failed', error, finishedAt: new Date() });
       }
-      return retry ? 'retry' : 'failed';
+      if (outcome === 'dead') {
+        await em.update(Execution, job.executionId, {
+          status: 'failed',
+          error: `${error} (gave up after ${job.attempts} attempts)`,
+          finishedAt: new Date(),
+        });
+      }
+      return outcome;
     });
   }
 

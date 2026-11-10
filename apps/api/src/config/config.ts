@@ -17,6 +17,8 @@ export interface WorkerConfig {
   leaseSeconds: number;
   reaperIntervalMs: number;
   shutdownGraceMs: number;
+  retryBaseMs: number;
+  retryCapMs: number;
 }
 
 export interface MigrationConfig {
@@ -116,6 +118,9 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
 
 export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
   const read = new EnvReader(env);
+  const retryBaseMs = read.integer('RETRY_BASE_MS', 1_000, 10, 600_000);
+  const retryCapMs = read.integer('RETRY_CAP_MS', 300_000, 10, 86_400_000);
+  if (retryCapMs < retryBaseMs) read.problems.push('RETRY_CAP_MS must not be smaller than RETRY_BASE_MS');
   return read.done({
     nodeEnv: read.nodeEnv(),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
@@ -123,6 +128,8 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     leaseSeconds: read.integer('WORKER_LEASE_SECONDS', 30, 2, 3_600),
     reaperIntervalMs: read.integer('WORKER_REAPER_INTERVAL_MS', 5_000, 100, 600_000),
     shutdownGraceMs: read.integer('WORKER_SHUTDOWN_GRACE_MS', 25_000, 0, 600_000),
+    retryBaseMs,
+    retryCapMs,
   });
 }
 

@@ -102,7 +102,15 @@ describe('loadWorkerConfig', () => {
       leaseSeconds: 30,
       reaperIntervalMs: 5_000,
       shutdownGraceMs: 25_000,
+      retryBaseMs: 1_000,
+      retryCapMs: 300_000,
     });
+  });
+
+  it('rejects a retry cap below the retry base', () => {
+    expect(problemsOf(() => loadWorkerConfig({ DATABASE_URL, RETRY_BASE_MS: '5000', RETRY_CAP_MS: '1000' }))).toEqual([
+      'RETRY_CAP_MS must not be smaller than RETRY_BASE_MS',
+    ]);
   });
 
   it.each([
