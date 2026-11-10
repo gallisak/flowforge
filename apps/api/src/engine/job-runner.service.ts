@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { Repository } from 'typeorm';
+import { EntityManager } from 'typeorm';
+import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Workflow } from '../entities';
 import { JobQueueService } from './job-queue.service';
 import { StepError, StepExecutor } from './step-executor';
@@ -18,9 +18,7 @@ export class JobRunnerService implements OnApplicationShutdown {
   constructor(
     private readonly queue: JobQueueService,
     private readonly executor: StepExecutor,
-    @InjectRepository(Execution) private readonly executions: Repository<Execution>,
-    @InjectRepository(Workflow) private readonly workflows: Repository<Workflow>,
-    @InjectRepository(StepRun) private readonly stepRuns: Repository<StepRun>,
+    private readonly db: TenantDb,
   ) {}
 
   start(concurrency: number): void {
@@ -50,43 +48,49 @@ export class JobRunnerService implements OnApplicationShutdown {
   }
 
   async process(job: Job): Promise<void> {
-    const execution = await this.executions.findOneOrFail({ where: { id: job.executionId } });
-    const workflow = await this.workflows.findOneOrFail({ where: { id: execution.workflowId } });
+    const inTenant = <T>(work: (em: EntityManager) => Promise<T>) => this.db.run(job.tenantId, work);
 
-    await this.executions.update(execution.id, { status: 'running' });
+    const execution = await inTenant((em) => em.findOneOrFail(Execution, { where: { id: job.executionId } }));
+    const workflow = await inTenant((em) => em.findOneOrFail(Workflow, { where: { id: execution.workflowId } }));
+
+    await inTenant((em) => em.update(Execution, execution.id, { status: 'running' }));
     const ctx: StepContext = { input: execution.input, steps: {} };
 
     try {
       for (let i = 0; i < workflow.steps.length; i++) {
         const step = workflow.steps[i];
-        const run = await this.stepRuns.save(
-          this.stepRuns.create({ executionId: execution.id, stepIndex: i, stepId: step.id }),
+        const run = await inTenant((em) =>
+          em.save(em.create(StepRun, { tenantId: job.tenantId, executionId: execution.id, stepIndex: i, stepId: step.id })),
         );
         try {
           const output = await this.executor.execute(step, ctx);
           ctx.steps[step.id] = output;
-          await this.stepRuns.update(run.id, { status: 'succeeded', output: output as object });
+          await inTenant((em) => em.update(StepRun, run.id, { status: 'succeeded', output: output as object }));
         } catch (err) {
-          await this.stepRuns.update(run.id, { status: 'failed', error: (err as Error).message });
+          await inTenant((em) => em.update(StepRun, run.id, { status: 'failed', error: (err as Error).message }));
           throw err;
         }
       }
       const last = workflow.steps[workflow.steps.length - 1];
-      await this.executions.update(execution.id, {
-        status: 'succeeded',
-        output: ctx.steps[last.id] as object,
-        finishedAt: new Date(),
-      });
-      await this.queue.complete(job.id);
+      await inTenant((em) =>
+        em.update(Execution, execution.id, {
+          status: 'succeeded',
+          output: ctx.steps[last.id] as object,
+          finishedAt: new Date(),
+        }),
+      );
+      await this.queue.complete(job);
     } catch (err) {
       const retryable = err instanceof StepError ? err.retryable : true;
       const willRetry = await this.queue.fail(job, (err as Error).message, retryable);
       if (!willRetry) {
-        await this.executions.update(execution.id, {
-          status: 'failed',
-          error: (err as Error).message,
-          finishedAt: new Date(),
-        });
+        await inTenant((em) =>
+          em.update(Execution, execution.id, {
+            status: 'failed',
+            error: (err as Error).message,
+            finishedAt: new Date(),
+          }),
+        );
       }
     }
   }

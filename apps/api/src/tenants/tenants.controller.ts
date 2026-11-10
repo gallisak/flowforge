@@ -1,10 +1,9 @@
 import { Body, Controller, ForbiddenException, Headers, Inject, Post } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { randomBytes, timingSafeEqual } from 'crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { IsString, MinLength } from 'class-validator';
-import { Repository } from 'typeorm';
 import { hashApiKey } from '../auth/api-key.guard';
 import { API_CONFIG, ApiConfig } from '../config/config';
+import { TenantDb } from '../db/tenant-db.service';
 import { Tenant } from '../entities';
 
 class CreateTenantDto {
@@ -22,7 +21,7 @@ function safeEqual(a: string, b: string): boolean {
 @Controller('tenants')
 export class TenantsController {
   constructor(
-    @InjectRepository(Tenant) private readonly tenants: Repository<Tenant>,
+    private readonly db: TenantDb,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
@@ -34,8 +33,9 @@ export class TenantsController {
     }
     const apiKey = `ff_${randomBytes(24).toString('hex')}`;
     const webhookSecret = randomBytes(24).toString('hex');
-    const tenant = await this.tenants.save(
-      this.tenants.create({ name: dto.name, apiKeyHash: hashApiKey(apiKey), webhookSecret }),
+    const id = randomUUID();
+    const tenant = await this.db.run(id, (em) =>
+      em.save(em.create(Tenant, { id, name: dto.name, apiKeyHash: hashApiKey(apiKey), webhookSecret })),
     );
     return { id: tenant.id, name: tenant.name, apiKey, webhookSecret };
   }

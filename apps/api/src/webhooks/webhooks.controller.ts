@@ -1,15 +1,13 @@
 import { Body, Controller, Headers, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, UnauthorizedException } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
 import { createHmac } from 'crypto';
-import { Repository } from 'typeorm';
+import { TenantDb } from '../db/tenant-db.service';
 import { Tenant, Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
 
 @Controller('hooks')
 export class WebhooksController {
   constructor(
-    @InjectRepository(Workflow) private readonly workflows: Repository<Workflow>,
-    @InjectRepository(Tenant) private readonly tenants: Repository<Tenant>,
+    private readonly db: TenantDb,
     private readonly executions: ExecutionsService,
   ) {}
 
@@ -20,9 +18,13 @@ export class WebhooksController {
     @Body() body: Record<string, unknown>,
     @Headers('x-signature') signature?: string,
   ) {
-    const workflow = await this.workflows.findOne({ where: { id: workflowId } });
-    if (!workflow || !workflow.enabled) throw new NotFoundException();
-    const tenant = await this.tenants.findOneOrFail({ where: { id: workflow.tenantId } });
+    const tenantId = await this.db.resolveWebhookTenant(workflowId);
+    if (!tenantId) throw new NotFoundException();
+    const { workflow, tenant } = await this.db.run(tenantId, async (em) => ({
+      workflow: await em.findOne(Workflow, { where: { id: workflowId } }),
+      tenant: await em.findOne(Tenant, { where: { id: tenantId } }),
+    }));
+    if (!workflow || !workflow.enabled || !tenant) throw new NotFoundException();
 
     const expected = createHmac('sha256', tenant.webhookSecret).update(JSON.stringify(body)).digest('hex');
     if (signature !== expected) {

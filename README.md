@@ -85,6 +85,43 @@ Two roles are provisioned by `docker/postgres/provision.sql`:
 | `flowforge_owner` | runs migrations, owns all tables | DDL in schema `public`; not a superuser |
 | `flowforge_app` | used by the API and workers | `SELECT/INSERT/UPDATE/DELETE` only; no DDL, not a superuser, no `BYPASSRLS` |
 
+## Tenant isolation
+
+Isolation is enforced twice: every query in the services filters by the authenticated tenant, and
+Postgres row level security rejects rows of other tenants even when a query forgets that filter.
+
+- Every tenant table (`tenants`, `workflows`, `executions`, `step_runs`, `jobs`) has row level
+  security enabled with one policy: the row's tenant must equal `app_current_tenant()`, which reads
+  the transaction-local setting `app.tenant_id`. Without the setting nothing is visible and nothing
+  can be written (`USING` and `WITH CHECK`).
+- `TenantDb.run(tenantId, work)` (`apps/api/src/db/tenant-db.service.ts`) opens a transaction, sets
+  `app.tenant_id` with `set_config(..., true)` and runs the work in it; services access tenant data
+  only through it. The setting dies with the transaction, so a pooled connection never carries a
+  tenant into the next request.
+- A few operations are cross-tenant by nature. They are narrow `SECURITY DEFINER` functions owned by
+  the migration role, with a fixed `search_path`, `EXECUTE` revoked from `PUBLIC` and granted only to
+  `flowforge_app`, and they return identifiers only: `auth_tenant` (API key hash → id, name),
+  `resolve_webhook_tenant` (workflow id → tenant id), `list_scheduled_workflows` and `next_ready_job`.
+  Everything after that lookup runs in the tenant's context.
+- Proof: `apps/api/test/integration/tenancy/row-level-security.int-spec.ts` connects as the
+  application role and bypasses the services: without a context every table is empty (also after a
+  previous transaction on the same connection set one), with tenant A's context only A's rows are
+  visible, rows of B cannot be updated, deleted, inserted or moved into, and RLS cannot be disabled.
+  `api-isolation.int-spec.ts` checks the same through the HTTP API.
+
+| Option | Verdict |
+|---|---|
+| Filters in application code only | Not enough: one forgotten `where` leaks data (see F-01). |
+| Schema or database per tenant | Strong isolation, but migrations, pooling and the shared queue become much harder; out of proportion for this platform. |
+| RLS with a session-level `SET` | A pooled connection can keep the previous tenant; a transaction-local setting cannot. |
+| Worker role with `BYPASSRLS` | Simpler queue code, but the worker would process tenant data without any database guard. |
+| **RLS + transaction-local setting + narrow definer functions** | Chosen. |
+
+Limitations: row level security protects against bugs in the application, not against SQL
+injection, because injected SQL could set `app.tenant_id` itself; queries stay parameterised. The
+migration role owns the tables and therefore bypasses the policies; it is used only by `migrate`.
+Each tenant operation is its own short transaction, which costs one extra round trip.
+
 ## Tests
 
 ```bash
@@ -147,6 +184,8 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   (still coupled to the TypeORM call shape and says nothing about what the database returns); a
   mutation-testing tool such as Stryker for the whole codebase (much heavier than needed for one
   property). A targeted mutation script was chosen because it proves exactly the claim in the test name.
+  Since row level security was added, the database also stops this mutant, so the script is meaningful
+  on the commits of this finding, which is how `prove-finding.sh` runs it.
 
 ### F-25 · API runs as a database superuser and accepts a placeholder admin token · Security / configuration · High
 

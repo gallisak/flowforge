@@ -1,22 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Workflow } from '../entities';
 
 @Injectable()
 export class ExecutionsService {
-  constructor(
-    @InjectDataSource() private readonly ds: DataSource,
-    @InjectRepository(Execution) private readonly executions: Repository<Execution>,
-    @InjectRepository(StepRun) private readonly stepRuns: Repository<StepRun>,
-  ) {}
+  constructor(private readonly db: TenantDb) {}
 
-  async enqueue(
-    workflow: Workflow,
+  enqueue(
+    workflow: Pick<Workflow, 'id' | 'tenantId'>,
     input: Record<string, unknown>,
     trigger: Execution['trigger'],
   ): Promise<Execution> {
-    return this.ds.transaction(async (em) => {
+    return this.db.run(workflow.tenantId, async (em) => {
       const execution = await em.save(
         em.create(Execution, { tenantId: workflow.tenantId, workflowId: workflow.id, input, trigger }),
       );
@@ -26,13 +21,20 @@ export class ExecutionsService {
   }
 
   list(tenantId: string, limit = 50): Promise<Execution[]> {
-    return this.executions.find({ where: { tenantId }, order: { createdAt: 'DESC' }, take: Math.min(limit, 200) });
+    return this.db.run(tenantId, (em) =>
+      em.find(Execution, { where: { tenantId }, order: { createdAt: 'DESC' }, take: Math.min(limit, 200) }),
+    );
   }
 
-  async get(tenantId: string, id: string): Promise<Execution & { steps: StepRun[] }> {
-    const execution = await this.executions.findOne({ where: { id, tenantId } });
-    if (!execution) throw new NotFoundException('Execution not found');
-    const steps = await this.stepRuns.find({ where: { executionId: id }, order: { stepIndex: 'ASC', startedAt: 'ASC' } });
-    return { ...execution, steps };
+  get(tenantId: string, id: string): Promise<Execution & { steps: StepRun[] }> {
+    return this.db.run(tenantId, async (em) => {
+      const execution = await em.findOne(Execution, { where: { id, tenantId } });
+      if (!execution) throw new NotFoundException('Execution not found');
+      const steps = await em.find(StepRun, {
+        where: { executionId: id },
+        order: { stepIndex: 'ASC', startedAt: 'ASC' },
+      });
+      return { ...execution, steps };
+    });
   }
 }
