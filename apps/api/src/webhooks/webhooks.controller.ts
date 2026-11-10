@@ -11,12 +11,12 @@ import {
   UnauthorizedException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { createHmac } from 'crypto';
 import { Request } from 'express';
 import { RawBodyRequest } from '../app.setup';
 import { TenantDb } from '../db/tenant-db.service';
 import { Tenant, Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
+import { signatureMatches, webhookSignature } from './signature';
 
 @Controller('hooks')
 export class WebhooksController {
@@ -43,8 +43,7 @@ export class WebhooksController {
     }));
     if (!workflow || !workflow.enabled || !tenant) throw new NotFoundException();
 
-    const expected = createHmac('sha256', tenant.webhookSecret).update(req.rawBody).digest('hex');
-    if (signature !== expected) {
+    if (!signatureMatches(webhookSignature(tenant.webhookSecret, req.rawBody), signature)) {
       throw new UnauthorizedException('Invalid signature');
     }
 
