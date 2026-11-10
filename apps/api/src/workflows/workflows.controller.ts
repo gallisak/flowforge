@@ -2,7 +2,8 @@ import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, P
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentTenant } from '../auth/current-tenant.decorator';
 import { AuthenticatedTenant } from '../db/tenant-db.service';
-import { WorkflowInput, WorkflowsService } from './workflows.service';
+import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
+import { WorkflowsService } from './workflows.service';
 
 @Controller('workflows')
 @UseGuards(ApiKeyGuard)
@@ -20,12 +21,12 @@ export class WorkflowsController {
   }
 
   @Post()
-  create(@CurrentTenant() t: AuthenticatedTenant, @Body() body: WorkflowInput) {
+  create(@CurrentTenant() t: AuthenticatedTenant, @Body() body: CreateWorkflowDto) {
     return this.workflows.create(t.id, body);
   }
 
   @Patch(':id')
-  update(@CurrentTenant() t: AuthenticatedTenant, @Param('id', ParseUUIDPipe) id: string, @Body() body: Partial<WorkflowInput>) {
+  update(@CurrentTenant() t: AuthenticatedTenant, @Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateWorkflowDto) {
     return this.workflows.update(t.id, id, body);
   }
 

@@ -187,6 +187,40 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   Since row level security was added, the database also stops this mutant, so the script is meaningful
   on the commits of this finding, which is how `prove-finding.sh` runs it.
 
+### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
+
+- **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a
+  TypeScript `interface`, so the global `ValidationPipe` has nothing to validate; `create`
+  (`:29-36`) stores `name`, `cron`, `timezone` and `enabled` as received. Steps are checked only for
+  presence of their main field (`apps/api/src/workflows/definition.ts:23-25`).
+  `apps/api/src/executions/executions.controller.ts:28` turns `?limit=` into `Number(limit)`, and
+  `:20` accepts any JSON value as the execution input.
+- **Why it is dangerous:** a missing name or `?limit=abc` produces a `500` from the database layer
+  instead of a `400`; invalid cron expressions and time zones are stored and then fail silently in the
+  scheduler on every tick; a six-field cron such as `* * * * * *` schedules a run every second, which
+  lets one tenant flood the shared queue; unbounded expressions, messages, headers and bodies are
+  stored and later executed by workers; header values with line breaks are passed to outgoing requests.
+- **How to reproduce:** `apps/api/test/integration/findings/F-23-input-validation.int-spec.ts` sends
+  24 invalid requests (missing or oversized fields, bad cron, sub-minute cron, unknown time zone,
+  unsupported HTTP method, non-string headers or body, bad `limit`, array input). On the starter code
+  23 of them are accepted or fail with `500`. `scripts/prove-finding.sh F-23`.
+- **How it was fixed:**
+  - `CreateWorkflowDto` / `UpdateWorkflowDto` (`apps/api/src/workflows/workflow.dto.ts`) with
+    `class-validator` rules for name (1..200), steps, cron, timezone and enabled;
+  - `validateSchedule` (`apps/api/src/workflows/schedule.ts`): 5 or 6 fields, parseable by
+    `cron-parser`, never more often than once per minute (checked on the next ten occurrences in the
+    workflow's time zone), valid IANA time zone; applied on create and on every update;
+  - `validateSteps` (`apps/api/src/workflows/definition.ts`) now limits every field: URL length, HTTP
+    method allow-list, header names, single-line string values, forbidden hop-by-hop headers, body,
+    expression and message size;
+  - `ListExecutionsQuery` requires an integer `limit` in 1..200, and `JsonObjectPipe` requires the
+    execution input to be a JSON object.
+  - Unit tests: `test/workflow-definition-limits.spec.ts`, `test/schedule-validation.spec.ts`.
+- **Alternatives considered:** clamping invalid values silently (hides client bugs and still lets
+  nonsense in); validating the whole workflow with a JSON schema library (one more dependency, while
+  cross-field rules such as "cron frequency in this time zone" still need code); allowing sub-minute
+  schedules for selected tenants (belongs to per-tenant limits, not to input validation).
+
 ### F-25 · API runs as a database superuser and accepts a placeholder admin token · Security / configuration · High
 
 - **What:** `docker-compose.yml:4-7,17,25` and `apps/api/.env.example:2-3`. The API and the workers

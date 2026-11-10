@@ -3,14 +3,8 @@ import { EntityManager } from 'typeorm';
 import { TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { validateSteps } from './definition';
-
-export interface WorkflowInput {
-  name: string;
-  steps: unknown;
-  cron?: string | null;
-  timezone?: string;
-  enabled?: boolean;
-}
+import { validateSchedule } from './schedule';
+import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
 
 @Injectable()
 export class WorkflowsService {
@@ -24,8 +18,9 @@ export class WorkflowsService {
     return this.db.run(tenantId, (em) => this.findOwned(em, tenantId, id));
   }
 
-  create(tenantId: string, input: WorkflowInput): Promise<Workflow> {
+  create(tenantId: string, input: CreateWorkflowDto): Promise<Workflow> {
     const steps = validateSteps(input.steps);
+    validateSchedule(input.cron ?? null, input.timezone ?? 'UTC');
     return this.db.run(tenantId, (em) =>
       em.save(
         em.create(Workflow, {
@@ -40,9 +35,10 @@ export class WorkflowsService {
     );
   }
 
-  update(tenantId: string, id: string, input: Partial<WorkflowInput>): Promise<Workflow> {
+  update(tenantId: string, id: string, input: UpdateWorkflowDto): Promise<Workflow> {
     return this.db.run(tenantId, async (em) => {
       const wf = await this.findOwned(em, tenantId, id);
+      validateSchedule(input.cron === undefined ? wf.cron : input.cron, input.timezone ?? wf.timezone);
       if (input.name !== undefined) wf.name = input.name;
       if (input.steps !== undefined) {
         wf.steps = validateSteps(input.steps);
