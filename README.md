@@ -187,6 +187,31 @@ automatically in throwaway git worktrees. Line references point to the `initial 
   Since row level security was added, the database also stops this mutant, so the script is meaningful
   on the commits of this finding, which is how `prove-finding.sh` runs it.
 
+### F-03 · Concurrent workers execute the same job several times · Queue correctness with several workers · Critical
+
+- **What:** `apps/api/src/engine/job-queue.service.ts:17-34`. `claimNext` first selects the oldest
+  queued job and then updates it in a separate statement, without a row lock and without re-checking
+  `status = 'queued'` in the `UPDATE`. Every worker slot that polls between the two statements gets
+  the same job and runs it.
+- **Why it is dangerous:** side effects happen several times: the same HTTP call (a payment, an email,
+  an order) is sent two, three or four times, step results are recorded several times and `attempts`
+  is inflated. With the default compose setup (2 workers × 4 slots) a smoke run executed every step 8
+  times.
+- **How to reproduce:** `apps/api/test/integration/findings/F-03-exactly-once-claim.int-spec.ts`
+  (the starter's `it.todo('claims each job exactly once when several workers poll concurrently')`):
+  4 workers × 4 slots process 60 jobs whose single step calls a recording HTTP receiver. On the starter
+  code the receiver saw 197 calls for 60 jobs. `scripts/prove-finding.sh F-03`.
+- **How it was fixed:** claiming is one atomic statement in the `claim_job` function
+  (`apps/api/src/migrations/1794308377302-atomic-job-claim.ts`): `UPDATE jobs ... FROM (SELECT id ...
+  ORDER BY "runAt" LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *`. A row locked by another claimer is
+  skipped instead of waited for or taken twice. The function is `SECURITY DEFINER` because claiming
+  is cross-tenant; it returns only the claimed job.
+- **Alternatives considered:** `SELECT ... FOR UPDATE` without `SKIP LOCKED` (correct, but all
+  workers queue behind the same row); an optimistic `UPDATE ... WHERE id = $1 AND status = 'queued'`
+  with retries (correct, but under contention most claims lose and retry); advisory locks per job
+  (state lives outside the table and is lost silently when a session ends); `LISTEN/NOTIFY` as the
+  queue (notifications are not durable). See the queue design notes for the full comparison.
+
 ### F-23 · Input is not validated at the API boundary · Validation and error handling · Medium
 
 - **What:** `apps/api/src/workflows/workflows.service.ts:7-13` declares the request body as a
@@ -261,6 +286,6 @@ automatically in throwaway git worktrees. Line references point to the `initial 
 | File | Change | Reason |
 |---|---|---|
 | `apps/api/test/executions.service.spec.ts` | removed | F-02: the test could not fail; replaced by a real integration test |
+| `apps/api/test/job-queue.spec.ts` | removed `it.todo('claims each job exactly once when several workers poll concurrently')` | implemented as `test/integration/findings/F-03-exactly-once-claim.int-spec.ts` |
 
-All other starter tests are unchanged. The two `it.todo` entries in `test/job-queue.spec.ts` are
-implemented as separate integration tests together with the corresponding fixes.
+All other starter tests are unchanged.

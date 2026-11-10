@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
+import { Job } from '../entities';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -18,11 +19,6 @@ export interface ScheduledWorkflow {
   tenantId: string;
   cron: string;
   timezone: string;
-}
-
-export interface ReadyJob {
-  id: string;
-  tenantId: string;
 }
 
 @Injectable()
@@ -56,8 +52,8 @@ export class TenantDb {
     return this.dataSource.query('SELECT * FROM list_scheduled_workflows()');
   }
 
-  async nextReadyJob(): Promise<ReadyJob | null> {
-    const rows: ReadyJob[] = await this.dataSource.query('SELECT * FROM next_ready_job()');
+  async claimJob(workerId: string, leaseSeconds: number): Promise<Job | null> {
+    const rows: Job[] = await this.dataSource.query('SELECT * FROM claim_job($1, $2)', [workerId, leaseSeconds]);
     return rows[0] ?? null;
   }
 }

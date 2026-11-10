@@ -12,22 +12,8 @@ export function backoffMs(attempt: number): number {
 export class JobQueueService {
   constructor(private readonly db: TenantDb) {}
 
-  async claimNext(workerId: string): Promise<Job | null> {
-    const next = await this.db.nextReadyJob();
-    if (!next) return null;
-
-    return this.db.run(next.tenantId, async (em) => {
-      await em.query(
-        `UPDATE jobs
-            SET status = 'running', "lockedBy" = $1,
-                "lockedUntil" = now() + make_interval(secs => $2),
-                attempts = attempts + 1
-          WHERE id = $3`,
-        [workerId, LEASE_SECONDS, next.id],
-      );
-      const [job] = await em.query(`SELECT * FROM jobs WHERE id = $1`, [next.id]);
-      return job as Job;
-    });
+  claimNext(workerId: string): Promise<Job | null> {
+    return this.db.claimJob(workerId, LEASE_SECONDS);
   }
 
   async complete(job: Job): Promise<void> {
