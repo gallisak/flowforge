@@ -9,10 +9,11 @@ ID="$1"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-TEST_COMMIT="$(git log --format=%H --grep="^test(${ID}):" -n 1)"
-FIX_COMMIT="$(git log --format=%H --grep="^fix(${ID}):" -n 1)"
-[[ -n "$TEST_COMMIT" ]] || { echo "No commit found matching test(${ID}): ..." >&2; exit 2; }
-[[ -n "$FIX_COMMIT" ]] || { echo "No commit found matching fix(${ID}): ..." >&2; exit 2; }
+TEST_COMMIT="$(git log --diff-filter=A --reverse --format=%H -- \
+  "scripts/mutation/${ID}.sh" ":(glob)apps/api/test/**/findings/${ID}-*" | awk 'NR == 1')"
+[[ -n "$TEST_COMMIT" ]] || { echo "No commit adds a reproduction for ${ID} (scripts/mutation/${ID}.sh or test/**/findings/${ID}-*)" >&2; exit 2; }
+FIX_COMMIT="$(git rev-list --reverse --ancestry-path "${TEST_COMMIT}..HEAD" | awk 'NR == 1')"
+[[ -n "$FIX_COMMIT" ]] || { echo "No commit follows the reproduction commit of ${ID} on this branch" >&2; exit 2; }
 
 if [[ ! -d "$ROOT/apps/api/node_modules" ]]; then
   echo "Install dependencies first: (cd apps/api && npm ci)" >&2
@@ -34,6 +35,17 @@ run_at() {
   git worktree add --detach --quiet "$dir" "$commit"
   [[ -e "$dir/apps/api/node_modules" ]] || ln -s "$ROOT/apps/api/node_modules" "$dir/apps/api/node_modules"
   local log="$TMP/$label.log"
+  local mutation="$dir/scripts/mutation/${ID}.sh"
+  if [[ -x "$mutation" ]]; then
+    local status=0
+    (cd "$dir" && "$mutation" >"$log" 2>&1) || status=$?
+    case "$status" in
+      0) echo green ;;
+      1) echo red ;;
+      *) echo error ;;
+    esac
+    return
+  fi
   if (cd "$dir/apps/api" && npx jest --ci "findings/${ID}-" >"$log" 2>&1); then
     echo green
   elif grep -qE '^Tests:.*[0-9]+ failed' "$log"; then
