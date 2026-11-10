@@ -3,7 +3,7 @@ import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'dead';
 
 @Entity('jobs')
-@Index(['status', 'runAt'])
+@Index('IDX_jobs_expired_leases', ['lockedUntil'], { where: `"status" = 'running'` })
 @Index('IDX_jobs_running_by_tenant', ['tenantId'], { where: `"status" = 'running'` })
 @Index('IDX_jobs_queued_by_tenant', ['tenantId', 'runAt'], { where: `"status" = 'queued'` })
 export class Job {

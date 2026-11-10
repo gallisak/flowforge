@@ -12,6 +12,7 @@ import { WebhookSecretRotation1794320100000 } from './1794320100000-webhook-secr
 import { FairJobClaim1794320200000 } from './1794320200000-fair-job-claim';
 import { TenantLimits1794320300000 } from './1794320300000-tenant-limits';
 import { ContentionAwareClaim1794320400000 } from './1794320400000-contention-aware-claim';
+import { PurposeBuiltJobIndexes1794320500000 } from './1794320500000-purpose-built-job-indexes';
 
 export const migrations = [
   Baseline1794305090749,
@@ -28,4 +29,5 @@ export const migrations = [
   FairJobClaim1794320200000,
   TenantLimits1794320300000,
   ContentionAwareClaim1794320400000,
+  PurposeBuiltJobIndexes1794320500000,
 ];
