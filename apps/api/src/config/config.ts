@@ -11,6 +11,7 @@ export interface ApiConfig {
   databaseTimeouts: DatabaseTimeouts;
   adminToken: string;
   schedulerTickMs: number;
+  webhookToleranceSeconds: number;
 }
 
 export interface WorkerConfig {
@@ -143,6 +144,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     databaseTimeouts: read.databaseTimeouts(),
     adminToken: read.adminToken(nodeEnv),
     schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 30_000, 1_000, 3_600_000),
+    webhookToleranceSeconds: read.integer('WEBHOOK_TOLERANCE_SECONDS', 300, 10, 3_600),
   });
 }
 

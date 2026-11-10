@@ -1,5 +1,5 @@
 import { INestApplication } from '@nestjs/common';
-import { createHmac } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
 import request from 'supertest';
 
 export interface WebhookTarget {
@@ -28,6 +28,9 @@ export interface WebhookDelivery {
   timestamp?: number;
 }
 
-export function signWebhook(secret: string, body: string, _delivery: WebhookDelivery = {}): Record<string, string> {
-  return { 'x-signature': createHmac('sha256', secret).update(body).digest('hex') };
+export function signWebhook(secret: string, body: string, delivery: WebhookDelivery = {}): Record<string, string> {
+  const id = delivery.id ?? `msg_${randomUUID()}`;
+  const timestamp = String(delivery.timestamp ?? Math.floor(Date.now() / 1000));
+  const signature = createHmac('sha256', secret).update(`${id}.${timestamp}.${body}`).digest('base64');
+  return { 'webhook-id': id, 'webhook-timestamp': timestamp, 'webhook-signature': `v1,${signature}` };
 }

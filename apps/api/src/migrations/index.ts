@@ -7,6 +7,7 @@ import { WorkflowVersionSnapshots1794312361041 } from './1794312361041-workflow-
 import { StepCheckpoints1794312587199 } from './1794312587199-step-checkpoints';
 import { DurableDelay1794312901450 } from './1794312901450-durable-delay';
 import { StepIdempotencyKeys1794313078517 } from './1794313078517-step-idempotency-keys';
+import { ExecutionTriggerKeys1794320000000 } from './1794320000000-execution-trigger-keys';
 
 export const migrations = [
   Baseline1794305090749,
@@ -18,4 +19,5 @@ export const migrations = [
   StepCheckpoints1794312587199,
   DurableDelay1794312901450,
   StepIdempotencyKeys1794313078517,
+  ExecutionTriggerKeys1794320000000,
 ];

@@ -4,6 +4,7 @@ export type ExecutionStatus = 'pending' | 'running' | 'waiting' | 'succeeded' | 
 
 @Entity('executions')
 @Index(['tenantId', 'createdAt'])
+@Index('UQ_executions_tenant_trigger_key', ['tenantId', 'triggerKey'], { unique: true, where: '"triggerKey" IS NOT NULL' })
 export class Execution {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -31,6 +32,9 @@ export class Execution {
 
   @Column({ type: 'varchar', default: 'api' })
   trigger: 'api' | 'webhook' | 'cron';
+
+  @Column({ type: 'varchar', length: 300, nullable: true })
+  triggerKey: string | null;
 
   @CreateDateColumn()
   createdAt: Date;
