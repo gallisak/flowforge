@@ -64,10 +64,15 @@ describe('TransformSandbox', () => {
     expect((await failureOf('(function f() { return f(); })()')).message).toBe('transform exceeded the stack limit');
   });
 
-  it('rejects input nested deeper than the stack allows', async () => {
+  it('rejects input nested deeper than the host can serialize', async () => {
     let deep: unknown = 1;
-    for (let i = 0; i < 5_000; i++) deep = [deep];
-    expect((await failureOf('ctx', deep)).message).toBe('transform exceeded the stack limit');
+    for (let i = 0; i < 100_000; i++) deep = [deep];
+    expect((await failureOf('ctx', deep)).message).toBe('transform input cannot be serialized');
+  });
+
+  it('rejects input nested deeper than the sandbox stack allows', async () => {
+    const deep = JSON.parse(`${'['.repeat(20_000)}${']'.repeat(20_000)}`);
+    expect((await failureOf('ctx', deep)).message).toMatch(/stack limit|cannot be serialized/);
   });
 
   it('reports syntax errors without host details', async () => {

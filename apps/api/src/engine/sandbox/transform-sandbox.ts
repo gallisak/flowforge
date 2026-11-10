@@ -120,10 +120,16 @@ export class TransformSandbox {
   ) {}
 
   async evaluate(expr: string, input: unknown): Promise<unknown> {
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(input);
+    } catch {
+      throw new TransformError('transform input cannot be serialized');
+    }
     const thread = await this.acquire();
     try {
       const reply = await thread.run(
-        { expr, input: JSON.stringify(input), limits: this.limits },
+        { expr, input: serialized, limits: this.limits },
         this.limits.timeoutMs + Math.max(250, this.limits.timeoutMs),
       );
       if ('error' in reply) throw new TransformError(reply.error);
