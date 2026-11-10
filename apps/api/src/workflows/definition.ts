@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { fixedOriginOf } from '../engine/template';
 import { StepDefinition } from '../entities';
 
 const STEP_TYPES = ['http', 'transform', 'log', 'delay'] as const;
@@ -29,6 +30,9 @@ function invalid(message: string): never {
 function validateHttpStep(step: Record<string, unknown>, at: string): void {
   if (typeof step.url !== 'string') invalid(`${at}.url is required`);
   if (step.url.length > STEP_LIMITS.urlLength) invalid(`${at}.url must be at most ${STEP_LIMITS.urlLength} characters`);
+  if (!fixedOriginOf(step.url)) {
+    invalid(`${at}.url must start with a fixed http or https origin; placeholders are allowed only in the path, query or fragment`);
+  }
   if (step.method !== undefined && !HTTP_METHODS.includes(step.method as (typeof HTTP_METHODS)[number])) {
     invalid(`${at}.method must be one of ${HTTP_METHODS.join(', ')}`);
   }

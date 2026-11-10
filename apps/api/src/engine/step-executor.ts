@@ -10,7 +10,7 @@ import {
   TooManyRedirectsError,
 } from './http/safe-http';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from './sandbox/transform-sandbox';
-import { renderTemplate, StepContext } from './template';
+import { renderTemplate, renderUrlTemplate, StepContext, UrlTemplateError } from './template';
 
 export class StepError extends Error {
   constructor(message: string, readonly retryable = true) {
@@ -108,10 +108,9 @@ export class StepExecutor implements OnApplicationShutdown {
       Object.entries(step.headers ?? {}).filter(([name]) => name.toLowerCase() !== IDEMPOTENCY_HEADER.toLowerCase()),
     );
     if (idempotencyKey) headers[IDEMPOTENCY_HEADER] = idempotencyKey;
-    const url = renderTemplate(step.url, ctx);
     let res: SafeHttpResponse;
     try {
-      res = await this.httpClient.request(url, {
+      res = await this.httpClient.request(renderUrlTemplate(step.url, ctx), {
         method: step.method ?? 'GET',
         headers,
         body: step.body !== undefined ? renderTemplate(step.body, ctx) : undefined,
@@ -134,9 +133,8 @@ export class StepExecutor implements OnApplicationShutdown {
   private httpFailure(err: unknown): StepError {
     const blocked = findDestinationError(err);
     if (blocked) return new StepError(blocked.message, false);
-    if (err instanceof InvalidRequestUrlError || err instanceof TooManyRedirectsError || err instanceof ResponseTooLargeError) {
-      return new StepError(err.message, false);
-    }
+    const permanent = [InvalidRequestUrlError, UrlTemplateError, TooManyRedirectsError, ResponseTooLargeError];
+    if (permanent.some((type) => err instanceof type)) return new StepError((err as Error).message, false);
     const name = (err as Error).name;
     const timedOut = name === 'TimeoutError' || name === 'HeadersTimeoutError' || name === 'BodyTimeoutError';
     return new StepError(timedOut ? 'http request timed out' : 'http request failed: connection error', true);
