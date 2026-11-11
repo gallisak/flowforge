@@ -49,7 +49,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
     let fired = 0;
     for (const wf of scheduled) {
       try {
-        const it = parseExpression(wf.cron, { currentDate: this.lastTick });
+        const it = parseExpression(wf.cron, { currentDate: this.lastTick, tz: wf.timezone });
         for (let next = it.next().toDate(); next <= now; next = it.next().toDate()) {
           await this.executions.enqueue(wf, {}, 'cron');
           fired++;
