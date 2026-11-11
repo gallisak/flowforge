@@ -12,7 +12,7 @@ import {
   TooManyRedirectsError,
 } from './http/safe-http';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from './sandbox/transform-sandbox';
-import { renderTemplate, renderUrlTemplate, StepContext, UrlTemplateError } from './template';
+import { bodyFormatOf, renderBodyTemplate, renderTemplate, renderUrlTemplate, StepContext, UrlTemplateError } from './template';
 
 export class StepError extends Error {
   constructor(message: string, readonly retryable = true) {
@@ -120,7 +120,7 @@ export class StepExecutor implements OnApplicationShutdown {
       res = await this.httpClient.request(renderUrlTemplate(step.url, ctx), {
         method: step.method ?? 'GET',
         headers,
-        body: step.body !== undefined ? renderTemplate(step.body, ctx) : undefined,
+        body: step.body !== undefined ? renderBodyTemplate(step.body, ctx, bodyFormatOf(step.body, step.headers)) : undefined,
         signal,
       });
     } catch (err) {
