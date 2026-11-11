@@ -18,6 +18,7 @@ import { ClaimDueSchedules1794320700000 } from './1794320700000-claim-due-schedu
 import { ExecutionNotifications1794320800000 } from './1794320800000-execution-notifications';
 import { ExecutionChangeNotifications1794320900000 } from './1794320900000-execution-change-notifications';
 import { ExecutionListIndexes1794321000000 } from './1794321000000-execution-list-indexes';
+import { ExecutionWorkflowStatistics1794321100000 } from './1794321100000-execution-workflow-statistics';
 
 export const migrations = [
   Baseline1794305090749,
@@ -40,4 +41,5 @@ export const migrations = [
   ExecutionNotifications1794320800000,
   ExecutionChangeNotifications1794320900000,
   ExecutionListIndexes1794321000000,
+  ExecutionWorkflowStatistics1794321100000,
 ];
