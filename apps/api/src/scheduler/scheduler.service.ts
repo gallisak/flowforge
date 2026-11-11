@@ -1,8 +1,9 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
-import { parseExpression } from 'cron-parser';
 import { API_CONFIG, ApiConfig } from '../config/config';
-import { TenantDb } from '../db/tenant-db.service';
+import { DueSchedule, TenantDb } from '../db/tenant-db.service';
+import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
+import { planFiring } from './cron-schedule';
 
 @Injectable()
 export class SchedulerService implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -10,7 +11,6 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
   private timer?: NodeJS.Timeout;
   private running?: Promise<void>;
   private stopped = false;
-  private lastTick = new Date();
 
   constructor(
     private readonly db: TenantDb,
@@ -43,22 +43,35 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
     }, this.config.schedulerTickMs);
   }
 
-  async tick(now = new Date()): Promise<number> {
-    const scheduled = await this.db.listScheduledWorkflows();
+  async tick(): Promise<number> {
+    const now = new Date();
+    const due = await this.db.listDueSchedules(now);
 
     let fired = 0;
-    for (const wf of scheduled) {
+    for (const schedule of due) {
       try {
-        const it = parseExpression(wf.cron, { currentDate: this.lastTick, tz: wf.timezone });
-        for (let next = it.next().toDate(); next <= now; next = it.next().toDate()) {
-          await this.executions.enqueue(wf, {}, 'cron');
-          fired++;
-        }
-      } catch (err) {
-        this.logger.warn(`workflow ${wf.id}: invalid cron (${(err as Error).message})`);
+        fired += await this.fire(schedule, now);
+      } catch (error) {
+        this.logger.warn(`workflow ${schedule.id}: scheduled run postponed to the next tick (${(error as Error).message})`);
       }
     }
-    this.lastTick = now;
     return fired;
+  }
+
+  private fire(schedule: DueSchedule, now: Date): Promise<number> {
+    const plan = planFiring(schedule, schedule.missedRunPolicy, schedule.nextRunAt, now, {
+      misfireGraceMs: this.config.schedulerMisfireGraceMs,
+      maxCatchUpRuns: this.config.schedulerMaxCatchUpRuns,
+    });
+    if (plan.droppedMissedRuns) {
+      this.logger.warn(`workflow ${schedule.id}: only the latest ${this.config.schedulerMaxCatchUpRuns} missed runs were started`);
+    }
+    return this.db.run(schedule.tenantId, async (em) => {
+      for (const scheduledAt of plan.fire) {
+        await this.executions.enqueueWithin(em, schedule, { scheduledAt: scheduledAt.toISOString() }, 'cron');
+      }
+      await em.update(Workflow, { id: schedule.id, tenantId: schedule.tenantId }, { nextRunAt: plan.nextRunAt });
+      return plan.fire.length;
+    });
   }
 }

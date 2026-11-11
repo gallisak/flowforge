@@ -2,9 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { TenantDb } from '../db/tenant-db.service';
 import { Workflow, WorkflowVersion } from '../entities';
+import { nextOccurrence } from '../scheduler/cron-schedule';
 import { validateSteps } from './definition';
 import { validateSchedule } from './schedule';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
+
+function firstRunAt(cron: string | null, timezone: string, enabled: boolean): Date | null {
+  return enabled && cron !== null ? nextOccurrence({ cron, timezone }, new Date()) : null;
+}
 
 @Injectable()
 export class WorkflowsService {
@@ -30,6 +35,8 @@ export class WorkflowsService {
           cron: input.cron ?? null,
           timezone: input.timezone ?? 'UTC',
           enabled: input.enabled ?? true,
+          missedRunPolicy: input.missedRunPolicy ?? 'once',
+          nextRunAt: firstRunAt(input.cron ?? null, input.timezone ?? 'UTC', input.enabled ?? true),
         }),
       );
       await this.recordVersion(em, wf);
@@ -46,9 +53,14 @@ export class WorkflowsService {
         wf.steps = validateSteps(input.steps);
         wf.version += 1;
       }
+      const scheduleBefore = [wf.cron, wf.timezone, wf.enabled].join('|');
       if (input.cron !== undefined) wf.cron = input.cron;
       if (input.timezone !== undefined) wf.timezone = input.timezone;
       if (input.enabled !== undefined) wf.enabled = input.enabled;
+      if (input.missedRunPolicy !== undefined) wf.missedRunPolicy = input.missedRunPolicy;
+      if ([wf.cron, wf.timezone, wf.enabled].join('|') !== scheduleBefore) {
+        wf.nextRunAt = firstRunAt(wf.cron, wf.timezone, wf.enabled);
+      }
       const saved = await em.save(wf);
       if (input.steps !== undefined) await this.recordVersion(em, saved);
       return saved;

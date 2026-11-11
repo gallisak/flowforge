@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
 import { Job } from '../entities';
+import type { MissedRunPolicy } from '../scheduler/cron-schedule';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -10,11 +11,13 @@ export interface AuthenticatedTenant {
   name: string;
 }
 
-export interface ScheduledWorkflow {
+export interface DueSchedule {
   id: string;
   tenantId: string;
   cron: string;
   timezone: string;
+  nextRunAt: Date;
+  missedRunPolicy: MissedRunPolicy;
 }
 
 export interface RateLimitHit {
@@ -58,8 +61,8 @@ export class TenantDb {
     return row?.tenantId ?? null;
   }
 
-  listScheduledWorkflows(): Promise<ScheduledWorkflow[]> {
-    return this.dataSource.query('SELECT * FROM list_scheduled_workflows()');
+  listDueSchedules(now: Date): Promise<DueSchedule[]> {
+    return this.dataSource.query('SELECT * FROM list_due_schedules($1)', [now]);
   }
 
   async hitRateLimit(tenantId: string, defaultLimit: number): Promise<RateLimitHit> {

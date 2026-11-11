@@ -1,4 +1,5 @@
-import { ArrayNotEmpty, IsArray, IsBoolean, IsOptional, IsString, Length, ValidateIf } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, ValidateIf } from 'class-validator';
+import { MISSED_RUN_POLICIES, MissedRunPolicy } from '../scheduler/cron-schedule';
 
 export class CreateWorkflowDto {
   @IsString()
@@ -21,6 +22,10 @@ export class CreateWorkflowDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  @IsOptional()
+  @IsIn(MISSED_RUN_POLICIES)
+  missedRunPolicy?: MissedRunPolicy;
 }
 
 export class UpdateWorkflowDto {
@@ -46,4 +51,8 @@ export class UpdateWorkflowDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  @IsOptional()
+  @IsIn(MISSED_RUN_POLICIES)
+  missedRunPolicy?: MissedRunPolicy;
 }

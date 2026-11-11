@@ -11,6 +11,8 @@ export interface ApiConfig {
   databaseTimeouts: DatabaseTimeouts;
   adminToken: string;
   schedulerTickMs: number;
+  schedulerMisfireGraceMs: number;
+  schedulerMaxCatchUpRuns: number;
   webhookToleranceSeconds: number;
   webhookSecretGraceSeconds: number;
   tenantRateLimitPerMinute: number;
@@ -147,7 +149,9 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     databaseUrl: read.postgresUrl('DATABASE_URL'),
     databaseTimeouts: read.databaseTimeouts(),
     adminToken: read.adminToken(nodeEnv),
-    schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 30_000, 1_000, 3_600_000),
+    schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 5_000, 1_000, 3_600_000),
+    schedulerMisfireGraceMs: read.integer('SCHEDULER_MISFIRE_GRACE_MS', 60_000, 1_000, 3_600_000),
+    schedulerMaxCatchUpRuns: read.integer('SCHEDULER_MAX_CATCH_UP_RUNS', 100, 1, 1_000),
     webhookToleranceSeconds: read.integer('WEBHOOK_TOLERANCE_SECONDS', 300, 10, 3_600),
     webhookSecretGraceSeconds: read.integer('WEBHOOK_SECRET_GRACE_SECONDS', 86_400, 0, 2_592_000),
     tenantRateLimitPerMinute: read.integer('TENANT_RATE_LIMIT_PER_MINUTE', 600, 1, 1_000_000),
