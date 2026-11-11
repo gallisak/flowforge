@@ -1,0 +1,2395 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FlowForge API",
+    "version": "1.0.0",
+    "description": "Multi-tenant durable workflow platform. Tenant endpoints use the `x-api-key` header; every tenant request counts against its per-minute rate limit. Request bodies are limited to 100 KiB and 64 levels of JSON nesting; unknown properties of request bodies are ignored."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Tenants",
+      "description": "Platform administration with the admin token."
+    },
+    {
+      "name": "Workflows",
+      "description": "Workflow definitions; every change of steps creates a new immutable version."
+    },
+    {
+      "name": "Executions",
+      "description": "Starting, listing and following executions."
+    },
+    {
+      "name": "Webhooks",
+      "description": "Signed incoming webhooks that start executions."
+    },
+    {
+      "name": "Webhook secrets",
+      "description": "Rotation and revocation of inbound signing secrets."
+    },
+    {
+      "name": "Notifications",
+      "description": "Endpoint and signing secrets for notifications about finished executions."
+    },
+    {
+      "name": "Operations",
+      "description": "Metrics and health checks on the operations port of every process."
+    }
+  ],
+  "paths": {
+    "/tenants": {
+      "post": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Create a tenant",
+        "security": [
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The tenant with its API key and webhook secret.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedTenant"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTenant"
+              }
+            }
+          }
+        },
+        "operationId": "createTenant"
+      }
+    },
+    "/tenants/{id}/limits": {
+      "patch": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Change the limits of a tenant",
+        "security": [
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The limits after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantLimitsView"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantLimits"
+              }
+            }
+          }
+        },
+        "operationId": "updateTenantLimits"
+      }
+    },
+    "/workflows": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "List workflows",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workflows of the tenant, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Workflow"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "listWorkflows"
+      },
+      "post": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Create a workflow",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The created workflow, version 1.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workflow"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorkflow"
+              }
+            }
+          }
+        },
+        "operationId": "createWorkflow"
+      }
+    },
+    "/workflows/{id}": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Get a workflow",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workflow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workflow"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getWorkflow"
+      },
+      "patch": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Change a workflow",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workflow after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workflow"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWorkflow"
+              }
+            }
+          }
+        },
+        "operationId": "updateWorkflow"
+      },
+      "delete": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "Delete a workflow",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted. Queued executions fail with \"the workflow of this execution was deleted\".",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "deleteWorkflow"
+      }
+    },
+    "/workflows/{id}/run": {
+      "post": {
+        "tags": [
+          "Executions"
+        ],
+        "summary": "Start an execution",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The queued execution.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Execution"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Input of the execution, available to the steps as `input`."
+              }
+            }
+          }
+        },
+        "operationId": "runWorkflow"
+      }
+    },
+    "/executions": {
+      "get": {
+        "tags": [
+          "Executions"
+        ],
+        "summary": "List executions",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ExecutionStatus"
+            }
+          },
+          {
+            "name": "workflowId",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "description": "Value of `X-Next-Cursor` from the previous page. Pages never skip or repeat a row, also while new executions are added."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Execution"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-Next-Cursor": {
+                "$ref": "#/components/headers/NextCursor"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        },
+        "description": "Keyset pagination over `(createdAt, id)`.",
+        "operationId": "listExecutions"
+      }
+    },
+    "/executions/{id}": {
+      "get": {
+        "tags": [
+          "Executions"
+        ],
+        "summary": "Get an execution with its steps",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The execution and its step runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getExecution"
+      }
+    },
+    "/executions/{id}/events": {
+      "get": {
+        "tags": [
+          "Executions"
+        ],
+        "summary": "Follow an execution",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent events. `snapshot` carries the full `ExecutionDetail` on connect and after every change; the stream closes after a final status. `gone` is sent when the execution disappears. A comment is sent every 15 s; `retry: 3000` asks clients to reconnect after 3 s.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "retry: 3000\n\nevent: snapshot\ndata: {\"id\":\"...\",\"status\":\"running\",\"steps\":[]}\n\n"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "description": "At most EXECUTION_STREAMS_PER_TENANT open streams per tenant and API instance.",
+        "operationId": "followExecution"
+      }
+    },
+    "/hooks/{workflowId}": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Receive a signed webhook",
+        "security": [],
+        "description": "Standard Webhooks signature: `webhook-signature: v1,<base64 HMAC-SHA256(secret, webhook-id + \".\" + webhook-timestamp + \".\" + raw body)>`, several space-separated signatures allowed. The timestamp must be within WEBHOOK_TOLERANCE_SECONDS of the server time. Every redelivery with the same `webhook-id` returns the existing execution. An unknown or disabled workflow and a bad signature get the same 401.",
+        "parameters": [
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[!-~]{1,256}$"
+            },
+            "description": "Unique id of the event, 1 to 256 visible ASCII characters; redeliveries reuse it."
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{1,12}$"
+            },
+            "description": "Unix time in seconds."
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Becomes the input of the execution."
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted, or already accepted before.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookAccepted"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "description": "The body is not application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "receiveWebhook"
+      }
+    },
+    "/webhook-secrets": {
+      "get": {
+        "tags": [
+          "Webhook secrets"
+        ],
+        "summary": "List inbound signing secrets",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active secrets, without their values.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SigningSecret"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "listWebhookSecrets"
+      },
+      "post": {
+        "tags": [
+          "Webhook secrets"
+        ],
+        "summary": "Rotate the inbound signing secret",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new secret. The previous one stays valid for WEBHOOK_SECRET_GRACE_SECONDS.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedSigningSecret"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "rotateWebhookSecret"
+      }
+    },
+    "/webhook-secrets/{id}": {
+      "delete": {
+        "tags": [
+          "Webhook secrets"
+        ],
+        "summary": "Revoke an inbound signing secret at once",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "revokeWebhookSecret"
+      }
+    },
+    "/notifications/endpoint": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Get the notification endpoint",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationEndpoint"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getNotificationEndpoint"
+      },
+      "put": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Set the notification endpoint",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The endpoint; the first call also returns the outbound signing secret once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationEndpoint"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationEndpointRequest"
+              }
+            }
+          }
+        },
+        "operationId": "setNotificationEndpoint"
+      },
+      "delete": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Remove the notification endpoint",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed; no further notifications are recorded.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "removeNotificationEndpoint"
+      }
+    },
+    "/notifications/secrets": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "List outbound signing secrets",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active secrets, without their values.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SigningSecret"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "listNotificationSecrets"
+      },
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Rotate the outbound signing secret",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new secret. Notifications are signed with every active secret during the grace period.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedSigningSecret"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "rotateNotificationSecret"
+      }
+    },
+    "/notifications/secrets/{id}": {
+      "delete": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Revoke an outbound signing secret at once",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked.",
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "revokeNotificationSecret"
+      }
+    },
+    "/metrics": {
+      "servers": [
+        {
+          "url": "http://localhost:9100",
+          "description": "Operations port of every API, worker and scheduler process (METRICS_PORT), not published outside the compose network."
+        }
+      ],
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Prometheus metrics",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Queue depth per tenant, claim latency, step duration, retries, dead jobs, outbox backlog and deliveries, HTTP request duration and process metrics.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "metrics"
+      }
+    },
+    "/health/live": {
+      "servers": [
+        {
+          "url": "http://localhost:9100",
+          "description": "Operations port of every API, worker and scheduler process (METRICS_PORT), not published outside the compose network."
+        }
+      ],
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Liveness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "liveness"
+      }
+    },
+    "/health/ready": {
+      "servers": [
+        {
+          "url": "http://localhost:9100",
+          "description": "Operations port of every API, worker and scheduler process (METRICS_PORT), not published outside the compose network."
+        }
+      ],
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Readiness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The database answers within 2 s and the components of the process run; 503 from the moment the process starts shutting down.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not ready or shutting down.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "operationId": "readiness"
+      }
+    }
+  },
+  "webhooks": {
+    "executionFinished": {
+      "post": {
+        "summary": "Notification sent to the tenant endpoint when an execution finishes",
+        "operationId": "executionFinished",
+        "security": [],
+        "description": "Recorded in the same transaction as the final status (transactional outbox) and delivered at least once with retries; deduplicate by `webhook-id`, which stays the same for every attempt. Signed like inbound webhooks, with each active outbound secret.",
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Correlation-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "type",
+                  "timestamp",
+                  "data"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "execution.succeeded",
+                      "execution.failed"
+                    ]
+                  },
+                  "timestamp": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "When the event was recorded."
+                  },
+                  "data": {
+                    "$ref": "#/components/schemas/ExecutionNotification"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Delivered. Any other answer or a timeout is retried with exponential backoff up to OUTBOX_MAX_ATTEMPTS."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Tenant API key returned once by POST /tenants."
+      },
+      "adminToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-admin-token",
+        "description": "Platform administrator token (ADMIN_TOKEN)."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "statusCode",
+          "message"
+        ],
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "message": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "description": "Validation errors are returned as a list, one message per problem."
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "description": "Every error has this shape. Unexpected errors are answered with 500 and the message \"Internal server error\"; details are only logged, with the request id."
+      },
+      "HttpStep": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "description": "Unique within the workflow; later steps read the output as `steps.<id>`."
+          },
+          "type": {
+            "const": "http"
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Absolute http or https URL with a fixed origin. Placeholders such as `{{ input.orderId }}` are allowed only in the path, query or fragment and are percent-encoded. Internal, private and cloud metadata addresses are refused when the step runs, including after redirects and DNS answers."
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE",
+              "HEAD"
+            ],
+            "default": "GET"
+          },
+          "headers": {
+            "type": "object",
+            "maxProperties": 20,
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "description": "Host, Content-Length, Transfer-Encoding, Connection, Keep-Alive, Upgrade and Expect cannot be set. Idempotency-Key and X-Correlation-Id are always set by the platform."
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 65536,
+            "description": "Template. Values are encoded for the body format: inside a JSON string they are escaped, in a JSON value position they become JSON values, in a form body they are percent-encoded."
+          }
+        }
+      },
+      "TransformStep": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "expr"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "description": "Unique within the workflow; later steps read the output as `steps.<id>`."
+          },
+          "type": {
+            "const": "transform"
+          },
+          "expr": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "JavaScript expression evaluated in an isolated QuickJS sandbox with `ctx = { input, steps }`; limited in time, memory and stack, without access to the host."
+          }
+        }
+      },
+      "LogStep": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "message"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "description": "Unique within the workflow; later steps read the output as `steps.<id>`."
+          },
+          "type": {
+            "const": "log"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2048,
+            "description": "Template, for example `order {{ input.id }}`."
+          }
+        }
+      },
+      "DelayStep": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "ms"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "description": "Unique within the workflow; later steps read the output as `steps.<id>`."
+          },
+          "type": {
+            "const": "delay"
+          },
+          "ms": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 3600000,
+            "description": "Durable timer: the job is parked until the wake-up time and does not hold a worker slot."
+          }
+        }
+      },
+      "Step": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/HttpStep"
+          },
+          {
+            "$ref": "#/components/schemas/TransformStep"
+          },
+          {
+            "$ref": "#/components/schemas/LogStep"
+          },
+          {
+            "$ref": "#/components/schemas/DelayStep"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "http": "#/components/schemas/HttpStep",
+            "transform": "#/components/schemas/TransformStep",
+            "log": "#/components/schemas/LogStep",
+            "delay": "#/components/schemas/DelayStep"
+          }
+        }
+      },
+      "Steps": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 50,
+        "items": {
+          "$ref": "#/components/schemas/Step"
+        }
+      },
+      "MissedRunPolicy": {
+        "type": "string",
+        "enum": [
+          "skip",
+          "once",
+          "all"
+        ],
+        "description": "What to do with runs missed while no scheduler was running: drop them, run the latest once, or run each of them (at most SCHEDULER_MAX_CATCH_UP_RUNS)."
+      },
+      "Cron": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "Five fields, or six with seconds; runs must be at least one minute apart. Evaluated in `timezone`, including daylight saving time changes. `null` removes the schedule.",
+        "examples": [
+          "*/15 * * * *"
+        ]
+      },
+      "CreateWorkflow": {
+        "type": "object",
+        "required": [
+          "name",
+          "steps"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "steps": {
+            "$ref": "#/components/schemas/Steps"
+          },
+          "cron": {
+            "$ref": "#/components/schemas/Cron"
+          },
+          "timezone": {
+            "type": "string",
+            "default": "UTC",
+            "description": "IANA time zone, for example Europe/Kyiv."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "missedRunPolicy": {
+            "$ref": "#/components/schemas/MissedRunPolicy"
+          }
+        }
+      },
+      "UpdateWorkflow": {
+        "type": "object",
+        "minProperties": 1,
+        "description": "Changing `steps` creates a new version. Running executions keep the version they started with.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "steps": {
+            "$ref": "#/components/schemas/Steps"
+          },
+          "cron": {
+            "$ref": "#/components/schemas/Cron"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "missedRunPolicy": {
+            "$ref": "#/components/schemas/MissedRunPolicy"
+          }
+        }
+      },
+      "Workflow": {
+        "type": "object",
+        "required": [
+          "id",
+          "tenantId",
+          "name",
+          "steps",
+          "enabled",
+          "cron",
+          "timezone",
+          "missedRunPolicy",
+          "nextRunAt",
+          "version",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "steps": {
+            "$ref": "#/components/schemas/Steps"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "missedRunPolicy": {
+            "$ref": "#/components/schemas/MissedRunPolicy"
+          },
+          "nextRunAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Next scheduled run, `null` without a schedule or while disabled."
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ExecutionStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "waiting",
+          "succeeded",
+          "failed"
+        ],
+        "description": "`pending`: queued or waiting for a retry; `waiting`: parked by a delay step; `succeeded` and `failed` are final."
+      },
+      "Execution": {
+        "type": "object",
+        "required": [
+          "id",
+          "tenantId",
+          "workflowId",
+          "workflowVersion",
+          "status",
+          "input",
+          "output",
+          "error",
+          "trigger",
+          "triggerKey",
+          "correlationId",
+          "createdAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowVersion": {
+            "type": "integer",
+            "description": "The version snapshot this execution runs."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExecutionStatus"
+          },
+          "input": {
+            "type": "object"
+          },
+          "output": {
+            "description": "Output of the last step once the execution succeeded."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "api",
+              "webhook",
+              "cron"
+            ]
+          },
+          "triggerKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`webhook:<workflowId>:<webhook-id>` or `cron:<workflowId>:<scheduled time>`; unique per tenant, so a redelivered webhook or a second scheduler never creates a second execution."
+          },
+          "correlationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Request id of the trigger; passed to every step, outgoing request and notification."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "StepRun": {
+        "type": "object",
+        "required": [
+          "id",
+          "tenantId",
+          "executionId",
+          "stepIndex",
+          "stepId",
+          "status",
+          "attempts",
+          "idempotencyKey",
+          "output",
+          "error",
+          "startedAt",
+          "wakeAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stepIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stepId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "waiting",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "idempotencyKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`<executionId>:<stepId>` for http steps, the same for every attempt."
+          },
+          "output": {
+            "description": "Checkpoint: a succeeded step is never run again."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "wakeAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Wake-up time of a delay step."
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ExecutionDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Execution"
+          },
+          {
+            "type": "object",
+            "required": [
+              "steps"
+            ],
+            "properties": {
+              "steps": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StepRun"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "CreateTenant": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          }
+        }
+      },
+      "CreatedTenant": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "apiKey",
+          "webhookSecret"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "Shown only once; only its hash is stored."
+          },
+          "webhookSecret": {
+            "type": "string",
+            "description": "Inbound webhook signing secret `whsec_<base64>`, shown only once."
+          }
+        }
+      },
+      "TenantLimits": {
+        "type": "object",
+        "description": "`null` means the platform default from the configuration.",
+        "properties": {
+          "maxConcurrentJobs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "maxQueuedJobs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 10000000
+          },
+          "rateLimitPerMinute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 1000000
+          }
+        }
+      },
+      "TenantLimitsView": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/TenantLimits"
+          }
+        ]
+      },
+      "SigningSecret": {
+        "type": "object",
+        "required": [
+          "id",
+          "createdAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "End of the grace period of a rotated secret; `null` for the current one."
+          }
+        }
+      },
+      "CreatedSigningSecret": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SigningSecret"
+          },
+          {
+            "type": "object",
+            "required": [
+              "secret"
+            ],
+            "properties": {
+              "secret": {
+                "type": "string",
+                "description": "Shown only once."
+              }
+            }
+          }
+        ]
+      },
+      "WebhookAccepted": {
+        "type": "object",
+        "required": [
+          "executionId"
+        ],
+        "properties": {
+          "executionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The same id for every redelivery of the same `webhook-id`."
+          }
+        }
+      },
+      "NotificationEndpointRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "http or https, without credentials or fragment. The address is checked against the SSRF rules on every delivery."
+          }
+        }
+      },
+      "NotificationEndpoint": {
+        "type": "object",
+        "required": [
+          "url",
+          "updatedAt"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "secret": {
+            "type": "string",
+            "description": "Present only on the first PUT, which creates the outbound signing secret."
+          }
+        }
+      },
+      "ExecutionNotification": {
+        "type": "object",
+        "required": [
+          "executionId",
+          "workflowId",
+          "workflowVersion",
+          "status",
+          "trigger",
+          "output",
+          "outputTruncated",
+          "error",
+          "finishedAt"
+        ],
+        "properties": {
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowVersion": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "api",
+              "webhook",
+              "cron"
+            ]
+          },
+          "output": {
+            "description": "`null` when larger than 64 KiB."
+          },
+          "outputTruncated": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The input is invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "The credentials are missing or invalid.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The admin token is missing or wrong; the body is not looked at.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Not found, or it belongs to another tenant.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The body is larger than 100 KiB.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "A tenant limit is reached: requests per minute, queued jobs or open streams.",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          },
+          "X-RateLimit-Limit": {
+            "$ref": "#/components/headers/RateLimitLimit"
+          },
+          "X-RateLimit-Remaining": {
+            "$ref": "#/components/headers/RateLimitRemaining"
+          },
+          "X-RateLimit-Reset": {
+            "$ref": "#/components/headers/RateLimitReset"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "The API is shutting down; reconnect to another instance.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "description": "Correlation id of the request: the `x-request-id` sent by the client when it matches `[A-Za-z0-9._:-]{1,128}`, a new UUID otherwise.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RateLimitLimit": {
+        "description": "Requests allowed per minute for the tenant.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "RateLimitRemaining": {
+        "description": "Requests left in the current minute.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "RateLimitReset": {
+        "description": "Unix time in seconds when the window resets.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying.",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "NextCursor": {
+        "description": "Cursor of the next page; absent on the last page.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "parameters": {
+      "Id": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "RequestId": {
+        "name": "x-request-id",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+        },
+        "description": "Optional correlation id; echoed in the response and stored on the execution."
+      }
+    }
+  }
+}

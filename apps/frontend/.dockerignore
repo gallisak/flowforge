@@ -1,6 +1,7 @@
 node_modules
-dist
 .next
+test
+coverage
 .env
 *.log
 *.tsbuildinfo

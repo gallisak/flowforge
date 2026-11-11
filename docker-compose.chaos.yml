@@ -1,0 +1,14 @@
+services:
+  sink:
+    image: node:24-alpine
+    command: ['node', '/sink/sink.js']
+    init: true
+    volumes:
+      - ./docker/chaos:/sink:ro
+    ports: ['${SINK_PORT:-18080}:8080']
+
+  worker:
+    environment:
+      SSRF_ALLOWLIST: sink:8080
+    depends_on:
+      sink: { condition: service_started }
