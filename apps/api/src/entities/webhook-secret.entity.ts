@@ -1,6 +1,9 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+
+export type SecretPurpose = 'inbound' | 'outbound';
 
 @Entity('webhook_secrets')
+@Check('CHK_webhook_secrets_purpose', `"purpose" IN ('inbound', 'outbound')`)
 @Index('IDX_webhook_secrets_tenant', ['tenantId'])
 export class WebhookSecret {
   @PrimaryGeneratedColumn('uuid')
@@ -11,6 +14,9 @@ export class WebhookSecret {
 
   @Column()
   secret: string;
+
+  @Column({ type: 'varchar', length: 8, default: 'inbound' })
+  purpose: SecretPurpose;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

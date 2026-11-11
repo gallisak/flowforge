@@ -32,6 +32,12 @@ services:
       migrate: { condition: service_completed_successfully }
     init: true
     ports: ['${API_PORT:-3000}:3000']
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
 
   worker:
     build: ./apps/api
@@ -41,6 +47,12 @@ services:
     env_file: ./apps/api/.env.example
     depends_on:
       migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     deploy:
       replicas: 2
 
@@ -52,6 +64,12 @@ services:
     env_file: ./apps/api/.env.example
     depends_on:
       migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     deploy:
       replicas: 2
 
@@ -59,7 +77,8 @@ services:
     build: ./apps/frontend
     environment:
       API_URL: http://api:3000
-    depends_on: [api]
+    depends_on:
+      api: { condition: service_healthy }
     init: true
     ports: ['${WEB_PORT:-3001}:3000']
 

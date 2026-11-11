@@ -15,6 +15,7 @@ import { ContentionAwareClaim1794320400000 } from './1794320400000-contention-aw
 import { PurposeBuiltJobIndexes1794320500000 } from './1794320500000-purpose-built-job-indexes';
 import { PersistentSchedules1794320600000 } from './1794320600000-persistent-schedules';
 import { ClaimDueSchedules1794320700000 } from './1794320700000-claim-due-schedules';
+import { ExecutionNotifications1794320800000 } from './1794320800000-execution-notifications';
 
 export const migrations = [
   Baseline1794305090749,
@@ -34,4 +35,5 @@ export const migrations = [
   PurposeBuiltJobIndexes1794320500000,
   PersistentSchedules1794320600000,
   ClaimDueSchedules1794320700000,
+  ExecutionNotifications1794320800000,
 ];

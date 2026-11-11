@@ -19,6 +19,7 @@ export interface SafeHttpRequest {
   headers: Record<string, string>;
   body?: string;
   signal?: AbortSignal;
+  discardResponseBody?: boolean;
 }
 
 export interface SafeHttpResponse {
@@ -125,6 +126,10 @@ export class SafeHttpClient {
       const response = await request(url, { method, headers, body, signal, dispatcher: this.dispatcherFor(url) });
       const location = response.headers.location;
       if (!REDIRECT_STATUSES.has(response.statusCode) || typeof location !== 'string') {
+        if (init.discardResponseBody) {
+          await response.body.dump();
+          return { status: response.statusCode, body: '' };
+        }
         return { status: response.statusCode, body: await this.readBody(response) };
       }
       await response.body.dump();

@@ -7,6 +7,7 @@ import { dataSourceOptions, entities } from './db/data-source';
 import { TenantDb } from './db/tenant-db.service';
 import { JobQueueService } from './engine/job-queue.service';
 import { JobRunnerService } from './engine/job-runner.service';
+import { OutboxDispatcher } from './outbox/outbox-dispatcher.service';
 import { StepExecutor } from './engine/step-executor';
 import { ExecutionsController } from './executions/executions.controller';
 import { ExecutionsService } from './executions/executions.service';
@@ -16,6 +17,8 @@ import { RateLimitService } from './limits/rate-limit.service';
 import { WebhookSecretsController } from './webhooks/webhook-secrets.controller';
 import { WebhookSecretsService } from './webhooks/webhook-secrets.service';
 import { WebhooksController } from './webhooks/webhooks.controller';
+import { NotificationsController } from './notifications/notifications.controller';
+import { NotificationsService } from './notifications/notifications.service';
 import { WorkflowsController } from './workflows/workflows.controller';
 import { WorkflowsService } from './workflows/workflows.service';
 
@@ -28,8 +31,23 @@ import { WorkflowsService } from './workflows/workflows.service';
     }),
     TypeOrmModule.forFeature(entities),
   ],
-  controllers: [TenantsController, WorkflowsController, ExecutionsController, WebhooksController, WebhookSecretsController],
-  providers: [TenantDb, ApiKeyGuard, WorkflowsService, ExecutionsService, WebhookSecretsService, RateLimitService],
+  controllers: [
+    TenantsController,
+    WorkflowsController,
+    ExecutionsController,
+    WebhooksController,
+    WebhookSecretsController,
+    NotificationsController,
+  ],
+  providers: [
+    TenantDb,
+    ApiKeyGuard,
+    WorkflowsService,
+    ExecutionsService,
+    WebhookSecretsService,
+    RateLimitService,
+    NotificationsService,
+  ],
 })
 export class AppModule {}
 
@@ -42,7 +60,7 @@ export class AppModule {}
     }),
     TypeOrmModule.forFeature(entities),
   ],
-  providers: [TenantDb, JobQueueService, JobRunnerService, StepExecutor],
+  providers: [TenantDb, JobQueueService, JobRunnerService, StepExecutor, OutboxDispatcher],
 })
 export class WorkerModule {}
 

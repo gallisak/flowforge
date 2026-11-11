@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager } from 'typeorm';
-import { Job } from '../entities';
+import { Job, OutboxEvent } from '../entities';
 import type { MissedRunPolicy } from '../scheduler/cron-schedule';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -81,6 +81,10 @@ export class TenantDb {
 
   reapExpiredJobs(): Promise<ReapedJob[]> {
     return this.dataSource.query('SELECT * FROM reap_expired_jobs()');
+  }
+
+  claimOutboxEvents(dispatcherId: string, leaseSeconds: number, limit: number): Promise<OutboxEvent[]> {
+    return this.dataSource.query('SELECT * FROM claim_outbox_events($1, $2, $3)', [dispatcherId, leaseSeconds, limit]);
   }
 
   async claimJob(workerId: string, leaseSeconds: number, defaultMaxRunning: number): Promise<Job | null> {

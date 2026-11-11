@@ -32,6 +32,10 @@ export class LeaseLostError extends Error {
 export type ExecutionUpdate = QueryDeepPartialEntity<Execution>;
 export type FailOutcome = 'retry' | 'failed' | 'dead' | 'lost';
 
+async function recordExecutionEvent(em: EntityManager, executionId: string): Promise<void> {
+  await em.query('SELECT record_execution_event($1)', [executionId]);
+}
+
 const intervalFromNow = (seconds: number) => () => `now() + make_interval(secs => ${Number(seconds)})`;
 
 @Injectable()
@@ -58,6 +62,7 @@ export class JobQueueService {
       });
       if (result.affected !== 1) return false;
       await em.update(Execution, job.executionId, execution);
+      await recordExecutionEvent(em, job.executionId);
       return true;
     });
   }
@@ -87,6 +92,7 @@ export class JobQueueService {
           finishedAt: new Date(),
         });
       }
+      if (outcome !== 'retry') await recordExecutionEvent(em, job.executionId);
       return outcome;
     });
   }

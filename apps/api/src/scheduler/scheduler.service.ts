@@ -5,6 +5,7 @@ import { DueSchedule, TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
 import { TooManyRequestsException } from '../limits/too-many-requests';
+import { metrics } from '../observability/metrics';
 import { planFiring } from './cron-schedule';
 
 export function cronTriggerKey(workflowId: string, scheduledAt: Date): string {
@@ -23,6 +24,10 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
     private readonly executions: ExecutionsService,
     @Inject(SCHEDULER_CONFIG) private readonly config: SchedulerConfig,
   ) {}
+
+  get isRunning(): boolean {
+    return !this.stopped;
+  }
 
   onApplicationBootstrap(): void {
     this.scheduleNextTick();
@@ -62,9 +67,11 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
         });
         if (!outcome.claimed) break;
         fired += outcome.result;
+        metrics.scheduledRuns.inc({ outcome: 'started' }, outcome.result);
       } catch (error) {
         if (!current.schedule) throw error;
         postponed.push(current.schedule.id);
+        metrics.scheduledRuns.inc({ outcome: 'postponed' });
         this.logger.warn(`workflow ${current.schedule.id}: scheduled run postponed to the next tick (${(error as Error).message})`);
       }
     }

@@ -5,6 +5,8 @@ import { storableText } from '../common/storable';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Workflow, WorkflowVersion } from '../entities';
+import { LogContext, runWithLogContext } from '../observability/log-context';
+import { metrics } from '../observability/metrics';
 import { JobQueueService, LeaseLostError } from './job-queue.service';
 import { StepError, StepExecutor, stepIdempotencyKey } from './step-executor';
 import { StepContext } from './template';
@@ -32,6 +34,10 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     private readonly db: TenantDb,
     @Inject(WORKER_CONFIG) private readonly config: WorkerConfig,
   ) {}
+
+  get isRunning(): boolean {
+    return this.running;
+  }
 
   start(concurrency: number): void {
     this.running = true;
@@ -63,6 +69,10 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     this.reaperTimer = setTimeout(async () => {
       try {
         const reaped = await this.queue.reapExpired();
+        for (const job of reaped) {
+          if (job.status === 'dead') metrics.jobsDead.inc({ reason: 'lease_expired' });
+          else metrics.jobRetries.inc({ reason: 'lease_expired' });
+        }
         if (reaped.length > 0) this.logger.warn(`recovered ${reaped.length} job(s) with an expired lease`);
       } catch (err) {
         this.logger.error(`reaper error: ${(err as Error).message}`);
@@ -79,6 +89,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
           await sleep(250);
           continue;
         }
+        metrics.jobClaimLatency.observe(Math.max(0, Date.now() - new Date(job.runAt).getTime()) / 1000);
         if (!this.running) {
           await this.queue.release(job, this.workerId);
           return;
@@ -119,12 +130,18 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     }
   }
 
-  async process(job: Job, signal?: AbortSignal): Promise<void> {
+  process(job: Job, signal?: AbortSignal): Promise<void> {
+    const context: LogContext = { tenantId: job.tenantId, jobId: job.id, executionId: job.executionId, attempt: job.attempts };
+    return runWithLogContext(context, () => this.processInContext(job, context, signal));
+  }
+
+  private async processInContext(job: Job, context: LogContext, signal?: AbortSignal): Promise<void> {
     const inTenant = <T>(work: (em: EntityManager) => Promise<T>) => this.db.run(job.tenantId, work);
 
     try {
       const execution = await inTenant((em) => em.findOne(Execution, { where: { id: job.executionId } }));
       if (!execution) throw new StepError('the execution of this job no longer exists', false);
+      context.correlationId = execution.correlationId ?? undefined;
       const workflowExists = await inTenant((em) => em.exists(Workflow, { where: { id: execution.workflowId } }));
       if (!workflowExists) throw new StepError('the workflow of this execution was deleted', false);
       const snapshot = await inTenant((em) =>
@@ -158,16 +175,25 @@ export class JobRunnerService implements BeforeApplicationShutdown {
           return;
         }
         const idempotencyKey = step.type === 'http' ? stepIdempotencyKey(execution.id, step.id) : null;
+        context.stepId = step.id;
         const stepRunId = await this.queue.startStep(job, this.workerId, i, step.id, idempotencyKey);
+        const stepStarted = performance.now();
         let output: unknown;
         try {
-          output = await this.executor.execute(step, ctx, { signal, idempotencyKey: idempotencyKey ?? undefined });
+          output = await this.executor.execute(step, ctx, {
+            signal,
+            idempotencyKey: idempotencyKey ?? undefined,
+            correlationId: context.correlationId,
+          });
         } catch (err) {
+          metrics.stepDuration.observe({ type: step.type, outcome: 'failed' }, (performance.now() - stepStarted) / 1000);
           await this.recordStepFailure(job, stepRunId, err as Error);
           throw err;
         }
+        metrics.stepDuration.observe({ type: step.type, outcome: 'succeeded' }, (performance.now() - stepStarted) / 1000);
         await this.queue.finishStep(job, this.workerId, stepRunId, { output });
         ctx.steps[step.id] = output;
+        context.stepId = undefined;
       }
       const last = steps[steps.length - 1];
       const completed = await this.queue.complete(job, this.workerId, {
@@ -175,7 +201,12 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         output: ctx.steps[last.id] as object,
         finishedAt: new Date(),
       });
-      if (!completed) this.logger.warn(`job ${job.id} finished after its lease was lost; result discarded`);
+      if (!completed) {
+        this.logger.warn(`job ${job.id} finished after its lease was lost; result discarded`);
+        return;
+      }
+      metrics.jobsFinished.inc({ outcome: 'succeeded' });
+      this.logger.log('execution succeeded');
     } catch (err) {
       const leaseLost = err instanceof LeaseLostError ? err : signal?.reason instanceof LeaseLostError ? signal.reason : null;
       if (leaseLost) {
@@ -187,10 +218,15 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         return;
       }
       const retryable = err instanceof StepError ? err.retryable : true;
-      await this.queue.fail(job, this.workerId, storableText((err as Error).message), retryable, {
+      const message = storableText((err as Error).message);
+      const outcome = await this.queue.fail(job, this.workerId, message, retryable, {
         baseMs: this.config.retryBaseMs,
         capMs: this.config.retryCapMs,
       });
+      if (outcome === 'retry') metrics.jobRetries.inc({ reason: 'step_error' });
+      if (outcome === 'dead') metrics.jobsDead.inc({ reason: 'attempts_exhausted' });
+      if (outcome === 'failed' || outcome === 'dead') metrics.jobsFinished.inc({ outcome: 'failed' });
+      if (outcome !== 'lost') this.logger.warn(`execution attempt failed (${outcome}): ${message}`);
     }
   }
 

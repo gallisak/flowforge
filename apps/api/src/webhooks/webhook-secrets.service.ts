@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { EntityManager, IsNull, LessThanOrEqual, MoreThan } from 'typeorm';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
-import { WebhookSecret } from '../entities';
+import { SecretPurpose, WebhookSecret } from '../entities';
 
 export interface WebhookSecretSummary {
   id: string;
@@ -24,40 +24,40 @@ export class WebhookSecretsService {
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
-  activeSecrets(em: EntityManager, tenantId: string): Promise<WebhookSecret[]> {
+  activeSecrets(em: EntityManager, tenantId: string, purpose: SecretPurpose = 'inbound'): Promise<WebhookSecret[]> {
     const now = new Date();
     return em.find(WebhookSecret, {
       where: [
-        { tenantId, expiresAt: IsNull() },
-        { tenantId, expiresAt: MoreThan(now) },
+        { tenantId, purpose, expiresAt: IsNull() },
+        { tenantId, purpose, expiresAt: MoreThan(now) },
       ],
     });
   }
 
-  async create(em: EntityManager, tenantId: string): Promise<WebhookSecret> {
-    return em.save(em.create(WebhookSecret, { tenantId, secret: generateWebhookSecret(), expiresAt: null }));
+  async create(em: EntityManager, tenantId: string, purpose: SecretPurpose = 'inbound'): Promise<WebhookSecret> {
+    return em.save(em.create(WebhookSecret, { tenantId, purpose, secret: generateWebhookSecret(), expiresAt: null }));
   }
 
-  list(tenantId: string): Promise<WebhookSecretSummary[]> {
-    return this.db.run(tenantId, async (em) => (await this.activeSecrets(em, tenantId)).map(summary));
+  list(tenantId: string, purpose: SecretPurpose = 'inbound'): Promise<WebhookSecretSummary[]> {
+    return this.db.run(tenantId, async (em) => (await this.activeSecrets(em, tenantId, purpose)).map(summary));
   }
 
-  rotate(tenantId: string): Promise<WebhookSecretSummary & { secret: string }> {
+  rotate(tenantId: string, purpose: SecretPurpose = 'inbound'): Promise<WebhookSecretSummary & { secret: string }> {
     return this.db.run(tenantId, async (em) => {
       const now = new Date();
       const graceEnds = new Date(now.getTime() + this.config.webhookSecretGraceSeconds * 1000);
-      await em.delete(WebhookSecret, { tenantId, expiresAt: LessThanOrEqual(now) });
-      await em.update(WebhookSecret, { tenantId, expiresAt: IsNull() }, { expiresAt: graceEnds });
-      await em.update(WebhookSecret, { tenantId, expiresAt: MoreThan(graceEnds) }, { expiresAt: graceEnds });
-      const created = await this.create(em, tenantId);
+      await em.delete(WebhookSecret, { tenantId, purpose, expiresAt: LessThanOrEqual(now) });
+      await em.update(WebhookSecret, { tenantId, purpose, expiresAt: IsNull() }, { expiresAt: graceEnds });
+      await em.update(WebhookSecret, { tenantId, purpose, expiresAt: MoreThan(graceEnds) }, { expiresAt: graceEnds });
+      const created = await this.create(em, tenantId, purpose);
       return { ...summary(created), secret: created.secret };
     });
   }
 
-  revoke(tenantId: string, id: string): Promise<void> {
+  revoke(tenantId: string, id: string, purpose: SecretPurpose = 'inbound'): Promise<void> {
     return this.db.run(tenantId, async (em) => {
-      const { affected } = await em.delete(WebhookSecret, { tenantId, id });
-      if (!affected) throw new NotFoundException('Webhook secret not found');
+      const { affected } = await em.delete(WebhookSecret, { tenantId, id, purpose });
+      if (!affected) throw new NotFoundException('Signing secret not found');
     });
   }
 }

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Response } from 'express';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
+import { metrics } from '../observability/metrics';
 import { TooManyRequestsException } from './too-many-requests';
 
 @Injectable()
@@ -18,6 +19,7 @@ export class RateLimitService {
     res.setHeader('X-RateLimit-Remaining', String(Math.max(0, limit - hits)));
     res.setHeader('X-RateLimit-Reset', String(resetSeconds));
     if (hits > limit) {
+      metrics.rateLimitedRequests.inc();
       throw new TooManyRequestsException('Rate limit exceeded', resetSeconds - Date.now() / 1000);
     }
   }
