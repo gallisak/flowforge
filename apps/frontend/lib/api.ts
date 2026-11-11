@@ -1,17 +1,27 @@
 import { cookies } from 'next/headers';
+import { errorFrom } from './api-error';
 
-const API_URL = process.env.API_URL ?? 'http://localhost:3000';
+export const API_URL = process.env.API_URL ?? 'http://localhost:3000';
+export const API_KEY_COOKIE = 'ff_api_key';
+export const API_TIMEOUT_MS = 30_000;
 
-export async function apiFetch<T>(path: string): Promise<T> {
-  const key = cookies().get('ff_api_key')?.value ?? '';
-  const res = await fetch(`${API_URL}${path}`, { headers: { 'x-api-key': key }, cache: 'no-store' });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json() as Promise<T>;
+export function unreachable(error: unknown): { status: number; message: string } {
+  return (error as Error | null)?.name === 'TimeoutError'
+    ? { status: 504, message: 'The API did not answer in time' }
+    : { status: 502, message: 'The API is not reachable' };
 }
 
-export interface WorkflowDto { id: string; name: string; cron: string | null; enabled: boolean; version: number }
-export interface StepRunDto { id: string; stepIndex: number; stepId: string; status: string; error: string | null }
-export interface ExecutionDto {
-  id: string; status: 'pending' | 'running' | 'succeeded' | 'failed'; trigger: string;
-  output: unknown; error: string | null; steps: StepRunDto[];
+export function hasApiKey(): boolean {
+  return Boolean(cookies().get(API_KEY_COOKIE)?.value);
+}
+
+export async function apiFetch<T>(path: string): Promise<T> {
+  const key = cookies().get(API_KEY_COOKIE)?.value ?? '';
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: { 'x-api-key': key },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(API_TIMEOUT_MS),
+  });
+  if (!res.ok) throw await errorFrom(res);
+  return res.json() as Promise<T>;
 }

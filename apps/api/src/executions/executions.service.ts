@@ -3,11 +3,26 @@ import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { QUEUE_LIMITS, QueueLimits } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
-import { Execution, Job, StepRun, Tenant, Workflow } from '../entities';
+import { Execution, ExecutionStatus, Job, StepRun, Tenant, Workflow } from '../entities';
+import { decodeCursor, encodeCursor } from './execution-cursor';
 import { TooManyRequestsException } from '../limits/too-many-requests';
 import { currentCorrelationId } from '../observability/log-context';
 
 const QUEUE_FULL_RETRY_AFTER_SECONDS = 30;
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+export interface ExecutionListFilter {
+  limit?: number;
+  status?: ExecutionStatus;
+  workflowId?: string;
+  cursor?: string;
+}
+
+export interface ExecutionPage {
+  items: Execution[];
+  nextCursor: string | null;
+}
 
 @Injectable()
 export class ExecutionsService {
@@ -76,10 +91,32 @@ export class ExecutionsService {
     return em.findOneOrFail(Execution, { where: { id } });
   }
 
-  list(tenantId: string, limit = 50): Promise<Execution[]> {
-    return this.db.run(tenantId, (em) =>
-      em.find(Execution, { where: { tenantId }, order: { createdAt: 'DESC' }, take: Math.min(limit, 200) }),
-    );
+  list(tenantId: string, filter: ExecutionListFilter = {}): Promise<ExecutionPage> {
+    const limit = Math.min(filter.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+    const after = filter.cursor ? decodeCursor(filter.cursor) : null;
+    return this.db.run(tenantId, async (em) => {
+      const query = em
+        .createQueryBuilder(Execution, 'e')
+        .addSelect('e."createdAt"::text', 'cursor_created_at')
+        .where('e."tenantId" = :tenantId', { tenantId })
+        .orderBy('e."createdAt"', 'DESC')
+        .addOrderBy('e."id"', 'DESC')
+        .limit(limit + 1);
+      if (filter.status) query.andWhere('e."status" = :status', { status: filter.status });
+      if (filter.workflowId) query.andWhere('e."workflowId" = :workflowId', { workflowId: filter.workflowId });
+      if (after) {
+        query.andWhere('(e."createdAt", e."id") < (CAST(:afterCreatedAt AS timestamp), CAST(:afterId AS uuid))', {
+          afterCreatedAt: after.createdAt,
+          afterId: after.id,
+        });
+      }
+      const { entities, raw } = await query.getRawAndEntities<{ cursor_created_at: string }>();
+      const items = entities.slice(0, limit);
+      const last = items[items.length - 1];
+      const nextCursor =
+        entities.length > limit && last ? encodeCursor({ createdAt: raw[items.length - 1].cursor_created_at, id: last.id }) : null;
+      return { items, nextCursor };
+    });
   }
 
   get(tenantId: string, id: string): Promise<Execution & { steps: StepRun[] }> {

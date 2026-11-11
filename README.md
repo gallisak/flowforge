@@ -22,6 +22,8 @@ npm run test:int
 scripts/prove-finding.sh F-NN
 ```
 
+Frontend: `cd apps/frontend && npm ci && npm test` (Vitest and Testing Library).
+
 Integration tests need Docker (Postgres 16 via Testcontainers). `prove-finding.sh` checks that the
 reproduction of a finding fails before its fix and passes after it.
 
@@ -49,6 +51,7 @@ reproduction of a finding fails before its fix and passes after it.
 | F-18 | A retry repeats steps that already succeeded | `test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts` |
 | F-19 | A running execution picks up edits of its workflow | `test/integration/findings/F-19-workflow-version-snapshot.int-spec.ts` |
 | F-20 | A delay holds a worker slot and restarts after a crash | `test/integration/findings/F-20-durable-delay.int-spec.ts` |
+| F-22 | The execution page polls forever and leaks its timer | `apps/frontend/test/findings/F-22-execution-page-updates.test.tsx` |
 | F-23 | Input is not validated at the API boundary | `test/integration/findings/F-23-input-validation.int-spec.ts` |
 | F-24 | Webhook responses reveal which workflows exist | `test/integration/findings/F-24-webhook-enumeration.int-spec.ts` |
 | F-25 | API runs as a database superuser and accepts a placeholder admin token | `test/integration/findings/F-25-least-privilege.int-spec.ts` |

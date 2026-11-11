@@ -24,6 +24,7 @@ export interface ApiConfig extends ObservabilityConfig {
   nodeEnv: NodeEnv;
   port: number;
   metricsTopTenants: number;
+  executionStreamsPerTenant: number;
   databaseUrl: string;
   databaseTimeouts: DatabaseTimeouts;
   adminToken: string;
@@ -210,6 +211,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     port: read.integer('PORT', 3000, 0, 65_535),
     ...read.observability(),
     metricsTopTenants: read.integer('METRICS_TOP_TENANTS', 20, 1, 1_000),
+    executionStreamsPerTenant: read.integer('EXECUTION_STREAMS_PER_TENANT', 20, 1, 10_000),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
     databaseTimeouts: read.databaseTimeouts(),
     adminToken: read.adminToken(nodeEnv),

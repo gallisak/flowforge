@@ -1,9 +1,12 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-export type ExecutionStatus = 'pending' | 'running' | 'waiting' | 'succeeded' | 'failed';
+export const EXECUTION_STATUSES = ['pending', 'running', 'waiting', 'succeeded', 'failed'] as const;
+export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
 
 @Entity('executions')
-@Index(['tenantId', 'createdAt'])
+@Index('IDX_executions_tenant_created', ['tenantId', 'createdAt', 'id'])
+@Index('IDX_executions_tenant_status_created', ['tenantId', 'status', 'createdAt', 'id'])
+@Index('IDX_executions_tenant_workflow_created', ['tenantId', 'workflowId', 'createdAt', 'id'])
 @Index('UQ_executions_tenant_trigger_key', ['tenantId', 'triggerKey'], { unique: true, where: '"triggerKey" IS NOT NULL' })
 export class Execution {
   @PrimaryGeneratedColumn('uuid')

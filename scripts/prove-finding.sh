@@ -10,13 +10,16 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 TEST_COMMIT="$(git log --diff-filter=A --reverse --format=%H -- \
-  "scripts/mutation/${ID}.sh" ":(glob)apps/api/test/**/findings/${ID}-*" | awk 'NR == 1')"
-[[ -n "$TEST_COMMIT" ]] || { echo "No commit adds a reproduction for ${ID} (scripts/mutation/${ID}.sh or test/**/findings/${ID}-*)" >&2; exit 2; }
+  "scripts/mutation/${ID}.sh" ":(glob)apps/api/test/**/findings/${ID}-*" ":(glob)apps/frontend/test/**/findings/${ID}-*" | awk 'NR == 1')"
+[[ -n "$TEST_COMMIT" ]] || { echo "No commit adds a reproduction for ${ID} (scripts/mutation/${ID}.sh or apps/*/test/**/findings/${ID}-*)" >&2; exit 2; }
 FIX_COMMIT="$(git rev-list --reverse --ancestry-path "${TEST_COMMIT}..HEAD" | awk 'NR == 1')"
 [[ -n "$FIX_COMMIT" ]] || { echo "No commit follows the reproduction commit of ${ID} on this branch" >&2; exit 2; }
 
-if [[ ! -d "$ROOT/apps/api/node_modules" ]]; then
-  echo "Install dependencies first: (cd apps/api && npm ci)" >&2
+APP=api
+if git show --name-only --format= "$TEST_COMMIT" | grep -q "^apps/frontend/test/.*findings/${ID}-"; then APP=frontend; fi
+
+if [[ ! -d "$ROOT/apps/$APP/node_modules" ]]; then
+  echo "Install dependencies first: (cd apps/$APP && npm ci)" >&2
   exit 2
 fi
 
@@ -43,6 +46,16 @@ run_reproduction() {
     esac
     return
   fi
+  if [[ "$APP" == frontend ]]; then
+    if (cd "$dir/apps/frontend" && npx vitest run "findings/${ID}-" >"$log" 2>&1); then
+      echo green
+    elif grep -qE 'Tests +[0-9]+ failed' "$log"; then
+      echo red
+    else
+      echo error
+    fi
+    return
+  fi
   if (cd "$dir/apps/api" && npx jest --ci "findings/${ID}-" >"$log" 2>&1); then
     echo green
   elif grep -qE '^Tests:.*[0-9]+ failed' "$log"; then
@@ -55,7 +68,7 @@ run_reproduction() {
 run_at() {
   local commit="$1" label="$2" dir="$TMP/$2"
   git worktree add --detach --quiet "$dir" "$commit"
-  [[ -e "$dir/apps/api/node_modules" ]] || ln -s "$ROOT/apps/api/node_modules" "$dir/apps/api/node_modules"
+  [[ -e "$dir/apps/$APP/node_modules" ]] || ln -s "$ROOT/apps/$APP/node_modules" "$dir/apps/$APP/node_modules"
   local log="$TMP/$label.log"
   local result
   result="$(run_reproduction "$dir" "$log")"
