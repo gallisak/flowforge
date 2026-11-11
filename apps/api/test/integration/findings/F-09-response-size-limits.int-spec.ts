@@ -12,6 +12,7 @@ describe('F-09 step results have a size limit', () => {
   let receiver: Receiver;
   let workers: InProcessWorkers;
   let bytesSent = 0;
+  const savedOutputLimit = process.env.STEP_OUTPUT_MAX_BYTES;
 
   async function run(steps: Parameters<typeof seedWorkflow>[2]): Promise<Execution> {
     const { tenant } = await seedTenant(ctx.ds, `limits-${Date.now()}-${Math.random()}`);
@@ -26,6 +27,7 @@ describe('F-09 step results have a size limit', () => {
   }
 
   beforeAll(async () => {
+    process.env.STEP_OUTPUT_MAX_BYTES = String(64 * 1024);
     receiver = await startReceiver(async (req, res) => {
       const chunk = Buffer.alloc(64 * 1024, 'a');
       if (req.path === '/declared') res.writeHead(200, { 'content-length': String(50 * MB) });
@@ -42,6 +44,8 @@ describe('F-09 step results have a size limit', () => {
   afterAll(async () => {
     await workers?.stop();
     await receiver?.close();
+    if (savedOutputLimit === undefined) delete process.env.STEP_OUTPUT_MAX_BYTES;
+    else process.env.STEP_OUTPUT_MAX_BYTES = savedOutputLimit;
   });
 
   it('stops reading a response body that grows past the limit', async () => {
@@ -61,7 +65,7 @@ describe('F-09 step results have a size limit', () => {
   });
 
   it('refuses to store an oversized step output', async () => {
-    const execution = await run([{ id: 'inflate', type: 'transform', expr: "'x'.repeat(8 * 1024 * 1024)" }]);
+    const execution = await run([{ id: 'inflate', type: 'transform', expr: "'x'.repeat(256 * 1024)" }]);
 
     expect(execution.status).toBe('failed');
     expect(execution.error).toMatch(/output exceeds/);
