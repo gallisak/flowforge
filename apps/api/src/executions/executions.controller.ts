@@ -1,14 +1,17 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentTenant } from '../auth/current-tenant.decorator';
 import { JsonObjectPipe } from '../common/json-object.pipe';
 import { AuthenticatedTenant } from '../db/tenant-db.service';
 import { WorkflowsService } from '../workflows/workflows.service';
+import { EXECUTION_STATUSES, ExecutionStatus } from '../entities';
 import { ExecutionStreamService } from './execution-stream.service';
 import { ExecutionsService } from './executions.service';
+
+export const NEXT_CURSOR_HEADER = 'x-next-cursor';
 
 export class ListExecutionsQuery {
   @IsOptional()
@@ -17,6 +20,19 @@ export class ListExecutionsQuery {
   @Min(1)
   @Max(200)
   limit?: number;
+
+  @IsOptional()
+  @IsIn(EXECUTION_STATUSES)
+  status?: ExecutionStatus;
+
+  @IsOptional()
+  @IsUUID()
+  workflowId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  cursor?: string;
 }
 
 @Controller()
@@ -39,8 +55,15 @@ export class ExecutionsController {
   }
 
   @Get('executions')
-  list(@CurrentTenant() t: AuthenticatedTenant, @Query() query: ListExecutionsQuery) {
-    return this.executions.list(t.id, query.limit);
+  async list(
+    @CurrentTenant() t: AuthenticatedTenant,
+    @Query() query: ListExecutionsQuery,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const page = await this.executions.list(t.id, query);
+    res.setHeader('access-control-expose-headers', NEXT_CURSOR_HEADER);
+    if (page.nextCursor) res.setHeader(NEXT_CURSOR_HEADER, page.nextCursor);
+    return page.items;
   }
 
   @Get('executions/:id/events')

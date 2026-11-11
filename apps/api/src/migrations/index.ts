@@ -17,6 +17,7 @@ import { PersistentSchedules1794320600000 } from './1794320600000-persistent-sch
 import { ClaimDueSchedules1794320700000 } from './1794320700000-claim-due-schedules';
 import { ExecutionNotifications1794320800000 } from './1794320800000-execution-notifications';
 import { ExecutionChangeNotifications1794320900000 } from './1794320900000-execution-change-notifications';
+import { ExecutionListIndexes1794321000000 } from './1794321000000-execution-list-indexes';
 
 export const migrations = [
   Baseline1794305090749,
@@ -38,4 +39,5 @@ export const migrations = [
   ClaimDueSchedules1794320700000,
   ExecutionNotifications1794320800000,
   ExecutionChangeNotifications1794320900000,
+  ExecutionListIndexes1794321000000,
 ];

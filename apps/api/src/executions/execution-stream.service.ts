@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BeforeApplicationShutdown, Inject, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { TooManyRequestsException } from '../limits/too-many-requests';
@@ -12,8 +12,10 @@ const RECONNECT_HINT_MS = 3_000;
 const STREAM_LIMIT_RETRY_AFTER_SECONDS = 10;
 
 @Injectable()
-export class ExecutionStreamService {
+export class ExecutionStreamService implements BeforeApplicationShutdown {
   private readonly openStreams = new Map<string, number>();
+  private readonly activeStreams = new Set<() => void>();
+  private stopping = false;
 
   constructor(
     private readonly hub: ExecutionEventsHub,
@@ -21,11 +23,24 @@ export class ExecutionStreamService {
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
+  beforeApplicationShutdown(): void {
+    this.stopping = true;
+    for (const finish of [...this.activeStreams]) finish();
+  }
+
+  private releaseSlot(tenantId: string): void {
+    const remaining = (this.openStreams.get(tenantId) ?? 1) - 1;
+    if (remaining > 0) this.openStreams.set(tenantId, remaining);
+    else this.openStreams.delete(tenantId);
+  }
+
   async stream(tenantId: string, executionId: string, req: Request, res: Response): Promise<void> {
+    if (this.stopping) throw new ServiceUnavailableException('The server is shutting down');
     const open = this.openStreams.get(tenantId) ?? 0;
     if (open >= this.config.executionStreamsPerTenant) {
       throw new TooManyRequestsException('Too many open execution streams', STREAM_LIMIT_RETRY_AFTER_SECONDS);
     }
+    this.openStreams.set(tenantId, open + 1);
 
     let closed = false;
     let refreshing = false;
@@ -35,12 +50,11 @@ export class ExecutionStreamService {
     const finish = () => {
       if (closed) return;
       closed = true;
+      this.activeStreams.delete(finish);
       unsubscribe();
       clearTimeout(timers.coalesce);
       clearInterval(timers.heartbeat);
-      const remaining = (this.openStreams.get(tenantId) ?? 1) - 1;
-      if (remaining > 0) this.openStreams.set(tenantId, remaining);
-      else this.openStreams.delete(tenantId);
+      this.releaseSlot(tenantId);
       if (!res.writableEnded) res.end();
     };
 
@@ -85,10 +99,16 @@ export class ExecutionStreamService {
       first = await this.executions.get(tenantId, executionId);
     } catch (error) {
       unsubscribe();
+      this.releaseSlot(tenantId);
       throw error;
     }
+    if (this.stopping) {
+      unsubscribe();
+      this.releaseSlot(tenantId);
+      throw new ServiceUnavailableException('The server is shutting down');
+    }
 
-    this.openStreams.set(tenantId, (this.openStreams.get(tenantId) ?? 0) + 1);
+    this.activeStreams.add(finish);
     req.on('close', finish);
     res.writeHead(200, {
       'content-type': 'text/event-stream',

@@ -1,25 +1,94 @@
-import { apiFetch, WorkflowDto } from '@/lib/api';
+import Link from 'next/link';
+import { Plus } from 'lucide-react';
+import { ErrorState } from '@/components/error-state';
+import { PageHeader } from '@/components/page-header';
+import { RunWorkflowButton } from '@/components/run-workflow-button';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { apiFetch } from '@/lib/api';
+import { ApiError } from '@/lib/api-error';
+import { formatDateTime } from '@/lib/format';
+import type { WorkflowDto } from '@/lib/types';
+
+export const dynamic = 'force-dynamic';
 
 export default async function WorkflowsPage() {
   let workflows: WorkflowDto[] = [];
-  let error: string | null = null;
+  let failure: ApiError | null = null;
   try {
     workflows = await apiFetch<WorkflowDto[]>('/workflows');
   } catch (e) {
-    error = (e as Error).message;
+    failure = e instanceof ApiError ? e : new ApiError(0, ['The API is not reachable']);
   }
+
   return (
     <>
-      <h1>Workflows</h1>
-      {error && <p style={{ color: 'crimson' }}>Failed to load: {error}</p>}
-      {!error && workflows.length === 0 && <p>No workflows yet.</p>}
-      <ul>
-        {workflows.map((w) => (
-          <li key={w.id}>
-            {w.name} · v{w.version} {w.cron ? `· cron ${w.cron}` : ''} {w.enabled ? '' : '(disabled)'}
-          </li>
-        ))}
-      </ul>
+      <PageHeader
+        title="Workflows"
+        description="Define the steps, schedule and triggers of your workflows."
+        actions={
+          <Button asChild>
+            <Link href="/workflows/new">
+              <Plus />
+              New workflow
+            </Link>
+          </Button>
+        }
+      />
+      {failure && <ErrorState title="Could not load workflows" message={failure.message} status={failure.status} />}
+      {!failure && workflows.length === 0 && (
+        <Card className="flex flex-col items-center gap-3 p-10 text-center">
+          <p className="font-medium">No workflows yet</p>
+          <p className="text-sm text-muted-foreground">Create your first workflow to start running executions.</p>
+          <Button asChild size="sm">
+            <Link href="/workflows/new">Create a workflow</Link>
+          </Button>
+        </Card>
+      )}
+      {!failure && workflows.length > 0 && (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Version</TableHead>
+                <TableHead>Schedule</TableHead>
+                <TableHead>Next run</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {workflows.map((w) => (
+                <TableRow key={w.id}>
+                  <TableCell className="font-medium">
+                    <Link href={`/workflows/${w.id}/edit`} className="hover:underline">
+                      {w.name}
+                    </Link>
+                  </TableCell>
+                  <TableCell>v{w.version}</TableCell>
+                  <TableCell className="font-mono text-xs">{w.cron ? `${w.cron} · ${w.timezone}` : '—'}</TableCell>
+                  <TableCell className="text-sm">{formatDateTime(w.nextRunAt)}</TableCell>
+                  <TableCell>{w.enabled ? <Badge variant="secondary">Enabled</Badge> : <Badge variant="outline">Disabled</Badge>}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center justify-end gap-2">
+                      <RunWorkflowButton workflowId={w.id} />
+                      <Button asChild size="sm" variant="ghost">
+                        <Link href={`/executions?workflowId=${w.id}`}>Executions</Link>
+                      </Button>
+                      <Button asChild size="sm" variant="ghost">
+                        <Link href={`/workflows/${w.id}/edit`}>Edit</Link>
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
     </>
   );
 }

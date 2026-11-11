@@ -55,6 +55,22 @@ describe('execution event stream', () => {
     else process.env.EXECUTION_STREAMS_PER_TENANT = saved;
   });
 
+  it('ends open streams when the API shuts down so that it can stop', async () => {
+    const id = await createRun([{ id: 'pause', type: 'delay', ms: 60_000 }]);
+    const stopping = await createTestApp();
+    await stopping.listen(0, '127.0.0.1');
+    const port = (stopping.getHttpServer().address() as AddressInfo).port;
+    const events = await openEventStream(`http://127.0.0.1:${port}/executions/${id}/events`, { 'x-api-key': tenant.apiKey });
+    opened.push(events);
+    expect(events.status).toBe(200);
+
+    const closed = stopping.close().then(() => 'closed' as const);
+    const stuck = new Promise<'stuck'>((resolve) => setTimeout(() => resolve('stuck'), 5_000).unref());
+
+    expect(await Promise.race([closed, stuck])).toBe('closed');
+    await events.ended;
+  });
+
   it('sends a snapshot on every change and closes the stream when the execution finishes', async () => {
     const id = await createRun([
       { id: 'first', type: 'log', message: 'one' },
@@ -116,6 +132,31 @@ describe('execution event stream', () => {
     events.close();
 
     await eventually(() => expect(hub.subscriberCount).toBe(before));
+  });
+
+  it('keeps the stream limit when many streams open at the same moment', async () => {
+    const id = await createRun([{ id: 'only', type: 'log', message: 'x' }]);
+
+    const burst = await Promise.all(Array.from({ length: 8 }, () => stream(id)));
+
+    expect(burst.filter((s) => s.status === 200)).toHaveLength(3);
+    expect(burst.filter((s) => s.status === 429)).toHaveLength(5);
+  });
+
+  it('frees the slot of a stream that was refused with 404', async () => {
+    const other = await seedTenant(ctx.ds, 'missing-target');
+    for (let i = 0; i < 5; i++) {
+      const missing = await stream('00000000-0000-0000-0000-000000000000', other.apiKey);
+      expect(missing.status).toBe(404);
+    }
+    const id = await request(app.getHttpServer())
+      .post('/workflows')
+      .set('x-api-key', other.apiKey)
+      .send({ name: 'x', steps: [{ id: 'only', type: 'log', message: 'x' }] })
+      .expect(201);
+    const run = await request(app.getHttpServer()).post(`/workflows/${id.body.id}/run`).set('x-api-key', other.apiKey).send({}).expect(201);
+
+    expect((await stream(run.body.id, other.apiKey)).status).toBe(200);
   });
 
   it('limits the number of open streams per tenant', async () => {
