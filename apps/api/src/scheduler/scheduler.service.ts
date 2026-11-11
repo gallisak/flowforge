@@ -1,9 +1,14 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
-import { API_CONFIG, ApiConfig } from '../config/config';
+import { EntityManager } from 'typeorm';
+import { SCHEDULER_CONFIG, SchedulerConfig } from '../config/config';
 import { DueSchedule, TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
 import { planFiring } from './cron-schedule';
+
+export function cronTriggerKey(workflowId: string, scheduledAt: Date): string {
+  return `cron:${workflowId}:${scheduledAt.toISOString()}`;
+}
 
 @Injectable()
 export class SchedulerService implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -15,7 +20,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
   constructor(
     private readonly db: TenantDb,
     private readonly executions: ExecutionsService,
-    @Inject(API_CONFIG) private readonly config: ApiConfig,
+    @Inject(SCHEDULER_CONFIG) private readonly config: SchedulerConfig,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -34,7 +39,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
       this.running = this.tick()
         .then(
           () => undefined,
-          (error: Error) => this.logger.error(error.message),
+          (error: Error) => this.logger.error(`scheduler tick failed: ${error.message}`),
         )
         .finally(() => {
           this.running = undefined;
@@ -45,20 +50,27 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
 
   async tick(): Promise<number> {
     const now = new Date();
-    const due = await this.db.listDueSchedules(now);
-
+    const postponed: string[] = [];
     let fired = 0;
-    for (const schedule of due) {
+    while (!this.stopped) {
+      const current: { schedule?: DueSchedule } = {};
       try {
-        fired += await this.fire(schedule, now);
+        const outcome = await this.db.claimDueSchedule(now, postponed, (schedule, em) => {
+          current.schedule = schedule;
+          return this.fire(schedule, em, now);
+        });
+        if (!outcome.claimed) break;
+        fired += outcome.result;
       } catch (error) {
-        this.logger.warn(`workflow ${schedule.id}: scheduled run postponed to the next tick (${(error as Error).message})`);
+        if (!current.schedule) throw error;
+        postponed.push(current.schedule.id);
+        this.logger.warn(`workflow ${current.schedule.id}: scheduled run postponed to the next tick (${(error as Error).message})`);
       }
     }
     return fired;
   }
 
-  private fire(schedule: DueSchedule, now: Date): Promise<number> {
+  private async fire(schedule: DueSchedule, em: EntityManager, now: Date): Promise<number> {
     const plan = planFiring(schedule, schedule.missedRunPolicy, schedule.nextRunAt, now, {
       misfireGraceMs: this.config.schedulerMisfireGraceMs,
       maxCatchUpRuns: this.config.schedulerMaxCatchUpRuns,
@@ -66,12 +78,16 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
     if (plan.droppedMissedRuns) {
       this.logger.warn(`workflow ${schedule.id}: only the latest ${this.config.schedulerMaxCatchUpRuns} missed runs were started`);
     }
-    return this.db.run(schedule.tenantId, async (em) => {
-      for (const scheduledAt of plan.fire) {
-        await this.executions.enqueueWithin(em, schedule, { scheduledAt: scheduledAt.toISOString() }, 'cron');
-      }
-      await em.update(Workflow, { id: schedule.id, tenantId: schedule.tenantId }, { nextRunAt: plan.nextRunAt });
-      return plan.fire.length;
-    });
+    for (const scheduledAt of plan.fire) {
+      await this.executions.enqueueWithin(
+        em,
+        schedule,
+        { scheduledAt: scheduledAt.toISOString() },
+        'cron',
+        cronTriggerKey(schedule.id, scheduledAt),
+      );
+    }
+    await em.update(Workflow, { id: schedule.id, tenantId: schedule.tenantId }, { nextRunAt: plan.nextRunAt });
+    return plan.fire.length;
   }
 }

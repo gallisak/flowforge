@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ApiKeyGuard } from './auth/api-key.guard';
-import { API_CONFIG, ApiConfig, WORKER_CONFIG, WorkerConfig } from './config/config';
-import { ApiConfigModule, WorkerConfigModule } from './config/config.module';
+import { API_CONFIG, ApiConfig, SCHEDULER_CONFIG, SchedulerConfig, WORKER_CONFIG, WorkerConfig } from './config/config';
+import { ApiConfigModule, SchedulerConfigModule, WorkerConfigModule } from './config/config.module';
 import { dataSourceOptions, entities } from './db/data-source';
 import { TenantDb } from './db/tenant-db.service';
 import { JobQueueService } from './engine/job-queue.service';
@@ -29,7 +29,7 @@ import { WorkflowsService } from './workflows/workflows.service';
     TypeOrmModule.forFeature(entities),
   ],
   controllers: [TenantsController, WorkflowsController, ExecutionsController, WebhooksController, WebhookSecretsController],
-  providers: [TenantDb, ApiKeyGuard, WorkflowsService, ExecutionsService, SchedulerService, WebhookSecretsService, RateLimitService],
+  providers: [TenantDb, ApiKeyGuard, WorkflowsService, ExecutionsService, WebhookSecretsService, RateLimitService],
 })
 export class AppModule {}
 
@@ -45,3 +45,16 @@ export class AppModule {}
   providers: [TenantDb, JobQueueService, JobRunnerService, StepExecutor],
 })
 export class WorkerModule {}
+
+@Module({
+  imports: [
+    SchedulerConfigModule,
+    TypeOrmModule.forRootAsync({
+      inject: [SCHEDULER_CONFIG],
+      useFactory: (config: SchedulerConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts),
+    }),
+    TypeOrmModule.forFeature(entities),
+  ],
+  providers: [TenantDb, ExecutionsService, SchedulerService],
+})
+export class SchedulerModule {}

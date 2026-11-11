@@ -44,6 +44,17 @@ services:
     deploy:
       replicas: 2
 
+  scheduler:
+    build: ./apps/api
+    command: ['node', 'dist/scheduler']
+    init: true
+    stop_grace_period: 30s
+    env_file: ./apps/api/.env.example
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    deploy:
+      replicas: 2
+
   frontend:
     build: ./apps/frontend
     environment:

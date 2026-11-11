@@ -1,7 +1,7 @@
 import { INestApplication, INestApplicationContext } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import request from 'supertest';
-import { AppModule } from '../../src/app.module';
+import { SchedulerModule } from '../../src/app.module';
 import { SchedulerService } from '../../src/scheduler/scheduler.service';
 
 export interface InProcessSchedulers {
@@ -12,7 +12,7 @@ export interface InProcessSchedulers {
 export async function startInProcessSchedulers(count: number): Promise<InProcessSchedulers> {
   const contexts: INestApplicationContext[] = [];
   for (let i = 0; i < count; i++) {
-    contexts.push(await NestFactory.createApplicationContext(AppModule, { logger: ['error'] }));
+    contexts.push(await NestFactory.createApplicationContext(SchedulerModule, { logger: ['error'] }));
   }
   return {
     services: contexts.map((c) => c.get(SchedulerService)),

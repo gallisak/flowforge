@@ -1,6 +1,6 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
-import { API_CONFIG, ApiConfig } from '../config/config';
+import { QUEUE_LIMITS, QueueLimits } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Tenant, Workflow } from '../entities';
 import { TooManyRequestsException } from '../limits/too-many-requests';
@@ -11,7 +11,7 @@ const QUEUE_FULL_RETRY_AFTER_SECONDS = 30;
 export class ExecutionsService {
   constructor(
     private readonly db: TenantDb,
-    @Inject(API_CONFIG) private readonly config: ApiConfig,
+    @Inject(QUEUE_LIMITS) private readonly limits: QueueLimits,
   ) {}
 
   enqueue(
@@ -40,7 +40,7 @@ export class ExecutionsService {
       if (existing) return existing;
     }
     const tenant = await em.findOneOrFail(Tenant, { where: { id: workflow.tenantId } });
-    const maxQueued = tenant.maxQueuedJobs ?? this.config.tenantMaxQueuedJobs;
+    const maxQueued = tenant.maxQueuedJobs ?? this.limits.tenantMaxQueuedJobs;
     const [{ queued }]: Array<{ queued: number }> = await em.query(
       `SELECT count(*)::int AS queued FROM (SELECT 1 FROM "jobs" WHERE "tenantId" = $1 AND "status" = 'queued' LIMIT $2) q`,
       [workflow.tenantId, maxQueued],

@@ -61,8 +61,17 @@ export class TenantDb {
     return row?.tenantId ?? null;
   }
 
-  listDueSchedules(now: Date): Promise<DueSchedule[]> {
-    return this.dataSource.query('SELECT * FROM list_due_schedules($1)', [now]);
+  claimDueSchedule<T>(
+    now: Date,
+    skip: readonly string[],
+    work: (schedule: DueSchedule, manager: EntityManager) => Promise<T>,
+  ): Promise<{ claimed: false } | { claimed: true; result: T }> {
+    return this.dataSource.transaction(async (manager) => {
+      const [schedule]: DueSchedule[] = await manager.query('SELECT * FROM claim_due_schedule($1, $2::uuid[])', [now, skip]);
+      if (!schedule) return { claimed: false };
+      await manager.query(`SELECT set_config('app.tenant_id', $1, true)`, [schedule.tenantId]);
+      return { claimed: true, result: await work(schedule, manager) };
+    });
   }
 
   async hitRateLimit(tenantId: string, defaultLimit: number): Promise<RateLimitHit> {
