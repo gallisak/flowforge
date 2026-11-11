@@ -8,6 +8,8 @@ import { ExecutionsService } from '../executions/executions.service';
 export class SchedulerService implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(SchedulerService.name);
   private timer?: NodeJS.Timeout;
+  private running?: Promise<void>;
+  private stopped = false;
   private lastTick = new Date();
 
   constructor(
@@ -17,12 +19,28 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
   ) {}
 
   onApplicationBootstrap(): void {
-    const every = this.config.schedulerTickMs;
-    this.timer = setInterval(() => void this.tick().catch((e) => this.logger.error(e.message)), every);
+    this.scheduleNextTick();
   }
 
-  onApplicationShutdown(): void {
-    if (this.timer) clearInterval(this.timer);
+  async onApplicationShutdown(): Promise<void> {
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+    await this.running;
+  }
+
+  private scheduleNextTick(): void {
+    if (this.stopped) return;
+    this.timer = setTimeout(() => {
+      this.running = this.tick()
+        .then(
+          () => undefined,
+          (error: Error) => this.logger.error(error.message),
+        )
+        .finally(() => {
+          this.running = undefined;
+          this.scheduleNextTick();
+        });
+    }, this.config.schedulerTickMs);
   }
 
   async tick(now = new Date()): Promise<number> {
