@@ -99,7 +99,8 @@ flowchart TD
   job queued at wakeAt, attempt given back, execution waiting"]
   T7 --> queue
   T6 -->|retry| queue
-  reaper["T8 reap_expired_jobs: expired lease -> queued or dead (+ failed execution, outbox event)"] --> queue
+  reaper["T8 reap_expired_jobs: expired lease -> queued (execution pending) or dead (failed execution,
+  outbox event); the interrupted step_run failed"] --> queue
   T5 --> outbox[("outbox_events")]
   T6 --> outbox
   outbox --> T9["T9 claim_outbox_events: SKIP LOCKED, lease"]
@@ -261,7 +262,7 @@ paths are under `apps/api` unless they start with `apps/`. F-21 (non-atomic tran
 ### F-02 · Tenant isolation unit test cannot fail · Tests that pass regardless · Medium
 - **What:** `test/executions.service.spec.ts:8,23-26` mocks the repository to return `[]` and expects `[]`.
 - **Why dangerous:** green for any implementation, including one that returns every tenant's data.
-- **Reproduce:** `scripts/mutation/F-02.sh` removes the tenant filter; the old test stays green.
+- **Reproduce:** `scripts/prove-finding.sh F-02` runs `scripts/mutation/F-02.sh` (removes the tenant filter of the starter query) at both commits: the old test stays green, the new one fails. Later code has a different query and row level security, so on it the script stops with an error.
 - **Fix** (`0bc710c`): `test/integration/findings/F-02-execution-list-isolation.int-spec.ts` with two tenants on a real database; red under the same mutation.
 - **Alternatives:** asserting mock arguments (still tied to the implementation).
 
@@ -447,6 +448,22 @@ paths are under `apps/api` unless they start with `apps/`. F-21 (non-atomic tran
 - **Fix** (`e2a9f3f`): values encoded for the body format (JSON string, JSON value, form).
 - **Alternatives:** a structured body object; no placeholders in bodies.
 
+### Defects found in the final review
+
+A code review after phase 12 found defects in code written during this work, not in the starter. They are
+fixed together in one commit (`fix: resolve defects found in the final code review`); each test below
+failed before that commit and passes after it, but `prove-finding.sh` does not apply to them.
+
+| Defect | Why it matters | Test | Fix |
+|---|---|---|---|
+| A client that left an event stream while the first snapshot was being read was never noticed | its stream slot, hub listener and heartbeat lived until the execution finished; repeated quick reconnects locked the tenant out with `429` | `execution/event-stream.int-spec.ts` | listen for `close` before the read, check the socket after it |
+| `PATCH /workflows/:id` accepted `null` for `name`, `timezone`, `enabled`, `missedRunPolicy` | a `NOT NULL` violation answered `500` | `api/workflow-update-nulls.int-spec.ts` | these fields are validated unless absent; `cron: null` still removes the schedule |
+| The reaper requeued a job but left its execution and step `running` | the UI showed a running step that nobody ran; after `dead` the step stayed `running` forever | `queue/lease-reaper-states.int-spec.ts` | migration `1794321200000`: requeued execution `pending`, interrupted step `failed` |
+| A valid `webhook-id` of 256 characters made a trigger key of 301 characters for a 300-character column | a correctly signed webhook answered `500` on every retry | `webhooks/request-boundary.int-spec.ts` | migration `1794321300000` widens `triggerKey` to 320 |
+
+The same commit makes `scripts/mutation/F-02.sh` exit with `2` (error), not `1` (mutant survived), when
+its target is missing, and lets the chaos sink answer `400` to a notification body that is not JSON.
+
 ## Indexes and query plans
 
 | Query | Index | Time, ms |
@@ -476,7 +493,7 @@ The test found that the list by workflow sorted all executions of the workflow (
 ```bash
 cd apps/api && npm ci && npm run lint && npm run typecheck
 npm run test:unit                # 330 tests, no database
-npm run test:int                 # 284 tests, Postgres 16 via Testcontainers (Docker)
+npm run test:int                 # 294 tests, Postgres 16 via Testcontainers (Docker)
 cd ../frontend && npm ci && npm run lint && npm test && npm run build   # 66 tests
 cd ../.. && scripts/prove-finding.sh F-03    # red before the fix, green after it
 ```

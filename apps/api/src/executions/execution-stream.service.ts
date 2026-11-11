@@ -94,22 +94,25 @@ export class ExecutionStreamService implements BeforeApplicationShutdown {
     };
 
     const unsubscribe = this.hub.subscribe(executionId, scheduleRefresh);
+    req.on('close', finish);
+    const abandon = (error: Error) => {
+      if (closed) return;
+      closed = true;
+      unsubscribe();
+      this.releaseSlot(tenantId);
+      throw error;
+    };
     let first: Awaited<ReturnType<ExecutionsService['get']>>;
     try {
       first = await this.executions.get(tenantId, executionId);
     } catch (error) {
-      unsubscribe();
-      this.releaseSlot(tenantId);
-      throw error;
+      return abandon(error as Error);
     }
-    if (this.stopping) {
-      unsubscribe();
-      this.releaseSlot(tenantId);
-      throw new ServiceUnavailableException('The server is shutting down');
-    }
+    if (closed) return;
+    if (req.socket.destroyed) return finish();
+    if (this.stopping) return abandon(new ServiceUnavailableException('The server is shutting down'));
 
     this.activeStreams.add(finish);
-    req.on('close', finish);
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-transform',

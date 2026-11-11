@@ -39,6 +39,22 @@ describe('webhook request boundary', () => {
     await deliver('"event"').expect(400);
   });
 
+  it('accepts and deduplicates a webhook-id of the longest allowed length', async () => {
+    const body = JSON.stringify({ order: 'long-id' });
+    const id = `msg_${'x'.repeat(252)}`;
+    const send = () =>
+      request(app.getHttpServer())
+        .post(`/hooks/${target.workflowId}`)
+        .set('content-type', 'application/json')
+        .set(signWebhook(target.webhookSecret, body, { id }))
+        .send(body);
+
+    const first = await send().expect(202);
+    const again = await send().expect(202);
+
+    expect(again.body.executionId).toBe(first.body.executionId);
+  });
+
   it('rejects a body above the size limit', async () => {
     await deliver(JSON.stringify({ pad: 'a'.repeat(200_000) })).expect(413);
   });

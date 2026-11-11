@@ -17,7 +17,9 @@ import sys
 path, original, mutant = sys.argv[1:4]
 source = open(path, encoding="utf-8").read()
 if source.count(original) != 1:
-    sys.exit(f"mutation target not found exactly once in {path}: {original!r}")
+    sys.stderr.write(f"mutation target not found exactly once in {path}: {original!r}\n")
+    sys.stderr.write("this mutation applies to the code of the F-02 commits; run scripts/prove-finding.sh F-02\n")
+    sys.exit(2)
 open(path, "w", encoding="utf-8").write(source.replace(original, mutant))
 PY
 

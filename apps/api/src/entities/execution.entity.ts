@@ -36,7 +36,7 @@ export class Execution {
   @Column({ type: 'varchar', default: 'api' })
   trigger: 'api' | 'webhook' | 'cron';
 
-  @Column({ type: 'varchar', length: 300, nullable: true })
+  @Column({ type: 'varchar', length: 320, nullable: true })
   triggerKey: string | null;
 
   @Column({ type: 'varchar', length: 128, nullable: true })

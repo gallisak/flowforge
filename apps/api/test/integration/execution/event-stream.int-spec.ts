@@ -1,7 +1,9 @@
 import { INestApplication } from '@nestjs/common';
+import { request as httpRequest } from 'http';
 import { AddressInfo } from 'net';
 import request from 'supertest';
 import { ExecutionEventsHub } from '../../../src/executions/execution-events.hub';
+import { ExecutionsService } from '../../../src/executions/executions.service';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
 import { seedTenant, SeededTenant } from '../../support/db';
@@ -132,6 +134,45 @@ describe('execution event stream', () => {
     events.close();
 
     await eventually(() => expect(hub.subscriberCount).toBe(before));
+  });
+
+  it('frees the slot and the listener of a client that leaves before the first snapshot', async () => {
+    const hub = app.get(ExecutionEventsHub);
+    const executions = app.get(ExecutionsService);
+    const id = await createRun([{ id: 'only', type: 'log', message: 'x' }]);
+    const before = hub.subscriberCount;
+    let releaseFirstRead: () => void = () => undefined;
+    const firstReadHeld = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let firstReadStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      firstReadStarted = resolve;
+    });
+    const read = executions.get.bind(executions);
+    const spy = jest.spyOn(executions, 'get').mockImplementationOnce(async (...args) => {
+      firstReadStarted();
+      await firstReadHeld;
+      return read(...args);
+    });
+
+    try {
+      const client = httpRequest(`${baseUrl}/executions/${id}/events`, { headers: { 'x-api-key': tenant.apiKey } });
+      client.on('error', () => undefined);
+      client.end();
+      await started;
+      await eventually(() => expect(hub.subscriberCount).toBe(before + 1));
+      client.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      releaseFirstRead();
+
+      await eventually(() => expect(hub.subscriberCount).toBe(before));
+    } finally {
+      releaseFirstRead();
+      spy.mockRestore();
+    }
+    const open = await Promise.all([stream(id), stream(id), stream(id)]);
+    expect(open.map((s) => s.status)).toEqual([200, 200, 200]);
   });
 
   it('keeps the stream limit when many streams open at the same moment', async () => {

@@ -19,6 +19,8 @@ import { ExecutionNotifications1794320800000 } from './1794320800000-execution-n
 import { ExecutionChangeNotifications1794320900000 } from './1794320900000-execution-change-notifications';
 import { ExecutionListIndexes1794321000000 } from './1794321000000-execution-list-indexes';
 import { ExecutionWorkflowStatistics1794321100000 } from './1794321100000-execution-workflow-statistics';
+import { ReaperReleasesInterruptedSteps1794321200000 } from './1794321200000-reaper-releases-interrupted-steps';
+import { LongerTriggerKeys1794321300000 } from './1794321300000-longer-trigger-keys';
 
 export const migrations = [
   Baseline1794305090749,
@@ -42,4 +44,6 @@ export const migrations = [
   ExecutionChangeNotifications1794320900000,
   ExecutionListIndexes1794321000000,
   ExecutionWorkflowStatistics1794321100000,
+  ReaperReleasesInterruptedSteps1794321200000,
+  LongerTriggerKeys1794321300000,
 ];

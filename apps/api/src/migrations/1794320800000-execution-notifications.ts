@@ -2,9 +2,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export const NOTIFICATION_OUTPUT_MAX_BYTES = 65_536;
 
-const REAPER_RESULT = `("id" uuid, "tenantId" uuid, "executionId" uuid, "status" character varying, "attempts" integer)`;
+export const REAPER_RESULT = `("id" uuid, "tenantId" uuid, "executionId" uuid, "status" character varying, "attempts" integer)`;
 
-const EXPIRE_JOBS = `
+export const EXPIRE_JOBS = `
   WITH expired AS (
     SELECT q."id"
       FROM "jobs" q

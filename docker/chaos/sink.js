@@ -55,8 +55,13 @@ http
         return answer(res, 200, { reset: true });
       }
       if (req.method === 'POST' && path === '/notify') {
-        const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-        state.notifications.push({ webhookId: req.headers['webhook-id'], executionId: body.data?.executionId, status: body.data?.status });
+        let body;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+        } catch {
+          return answer(res, 400, { error: 'body must be JSON' });
+        }
+        state.notifications.push({ webhookId: req.headers['webhook-id'], executionId: body?.data?.executionId, status: body?.data?.status });
         return answer(res, 200, { received: true });
       }
       if (req.method === 'POST' && ['/reserve', '/charge', '/email'].includes(path)) return receiveEffect(req, res, path);
