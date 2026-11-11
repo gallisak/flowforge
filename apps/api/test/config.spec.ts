@@ -22,6 +22,9 @@ describe('loadApiConfig', () => {
       databaseUrl: DATABASE_URL,
       databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
       adminToken: 'dev-admin-token',
+      logLevel: 'info',
+      metricsPort: 9_100,
+      metricsTopTenants: 20,
       webhookToleranceSeconds: 300,
       webhookSecretGraceSeconds: 86_400,
       tenantRateLimitPerMinute: 600,
@@ -104,6 +107,8 @@ describe('loadSchedulerConfig', () => {
       nodeEnv: 'development',
       databaseUrl: DATABASE_URL,
       databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
+      logLevel: 'info',
+      metricsPort: 9_100,
       schedulerTickMs: 5_000,
       schedulerMisfireGraceMs: 60_000,
       schedulerMaxCatchUpRuns: 100,
@@ -142,7 +147,27 @@ describe('loadWorkerConfig', () => {
       stepOutputMaxBytes: 1_048_576,
       ssrfAllowlist: [],
       tenantMaxConcurrentJobs: 10,
+      logLevel: 'info',
+      metricsPort: 9_100,
+      outbox: {
+        pollIntervalMs: 1_000,
+        batchSize: 10,
+        leaseSeconds: 30,
+        maxAttempts: 15,
+        retryBaseMs: 30_000,
+        retryCapMs: 3_600_000,
+        timeoutMs: 10_000,
+      },
     });
+  });
+
+  it.each([
+    ['LOG_LEVEL', 'loud', /^LOG_LEVEL must be one of/],
+    ['OUTBOX_MAX_ATTEMPTS', '0', /^OUTBOX_MAX_ATTEMPTS must be an integer/],
+    ['OUTBOX_RETRY_CAP_MS', '20', /^OUTBOX_RETRY_CAP_MS must not be smaller than OUTBOX_RETRY_BASE_MS/],
+    ['OUTBOX_TIMEOUT_MS', '30000', /^OUTBOX_TIMEOUT_MS must be shorter than OUTBOX_LEASE_SECONDS/],
+  ])('rejects %s=%s', (name, value, problem) => {
+    expect(problemsOf(() => loadWorkerConfig({ DATABASE_URL, [name]: value }))).toEqual([expect.stringMatching(problem)]);
   });
 
   it('reads the ssrf allowlist as normalized host and host:port entries', () => {

@@ -23,8 +23,55 @@ export function renderTemplate(template: string, ctx: StepContext, encode: (valu
   return template.replace(PLACEHOLDER, (_m, path: string) => {
     const value = lookup(ctx, path);
     if (value === undefined || value === null) return '';
-    return encode(typeof value === 'object' ? JSON.stringify(value) : String(value));
+    return encode(textOf(value));
   });
+}
+
+export type BodyFormat = 'json' | 'form' | 'text';
+
+const JSON_MEDIA_TYPE = /^application\/([a-z0-9.!#$&^_-]+\+)?json\s*(;|$)/;
+const FORM_MEDIA_TYPE = /^application\/x-www-form-urlencoded\s*(;|$)/;
+
+export function bodyFormatOf(template: string, headers: Record<string, string> = {}): BodyFormat {
+  const contentType = Object.entries(headers)
+    .find(([name]) => name.toLowerCase() === 'content-type')?.[1]
+    ?.trim()
+    .toLowerCase();
+  if (contentType === undefined) return /^\s*[[{]/.test(template) ? 'json' : 'text';
+  if (JSON_MEDIA_TYPE.test(contentType)) return 'json';
+  if (FORM_MEDIA_TYPE.test(contentType)) return 'form';
+  return 'text';
+}
+
+function textOf(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
+function renderJsonTemplate(template: string, ctx: StepContext): string {
+  let rendered = '';
+  let last = 0;
+  let inString = false;
+  let escaped = false;
+  for (const match of template.matchAll(new RegExp(PLACEHOLDER.source, 'g'))) {
+    const literal = template.slice(last, match.index);
+    for (const char of literal) {
+      if (escaped) escaped = false;
+      else if (inString && char === '\\') escaped = true;
+      else if (char === '"') inString = !inString;
+    }
+    const value = lookup(ctx, match[1]);
+    rendered += literal + (inString ? JSON.stringify(textOf(value)).slice(1, -1) : JSON.stringify(value ?? null));
+    escaped = false;
+    last = match.index + match[0].length;
+  }
+  return rendered + template.slice(last);
+}
+
+export function renderBodyTemplate(template: string, ctx: StepContext, format: BodyFormat): string {
+  if (format === 'json') return renderJsonTemplate(template, ctx);
+  if (format === 'form') return renderTemplate(template, ctx, encodeURIComponent);
+  return renderTemplate(template, ctx);
 }
 
 export function hasPlaceholders(template: string): boolean {

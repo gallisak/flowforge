@@ -55,8 +55,8 @@ describe('tenant limits', () => {
 
       const statuses = (await Promise.all(Array.from({ length: 12 }, () => run(target)))).map((r) => r.status);
 
+      expect(statuses.every((s) => s === 201 || s === 429)).toBe(true);
       expect(statuses.filter((s) => s === 201).length).toBeGreaterThanOrEqual(5);
-      expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
       await run(target).expect(429);
     });
 

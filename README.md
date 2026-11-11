@@ -10,7 +10,8 @@ docker compose up --build
 ```
 
 API: http://localhost:3000, frontend: http://localhost:3001. Workers and schedulers run as separate
-services, two replicas each. Configuration: `apps/api/.env.example`.
+services, two replicas each. Every service serves `/metrics`, `/health/live` and `/health/ready` on
+`METRICS_PORT` (9100) inside the compose network. Configuration: `apps/api/.env.example`.
 
 ## Tests
 
@@ -54,6 +55,7 @@ reproduction of a finding fails before its fix and passes after it.
 | F-26 | A NUL character makes data impossible to store | `test/integration/findings/F-26-nul-characters.int-spec.ts` |
 | F-27 | Deeply nested JSON crashes the API and poisons steps | `test/integration/findings/F-27-deeply-nested-json.int-spec.ts` |
 | F-28 | One tenant's backlog delays every other tenant | `test/integration/findings/F-28-noisy-neighbour.int-spec.ts` |
+| F-29 | Input values can inject fields into an http step body | `test/integration/findings/F-29-body-template-injection.int-spec.ts` |
 
 ## Changes to existing tests
 

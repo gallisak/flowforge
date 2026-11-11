@@ -5,3 +5,5 @@ export * from './execution.entity';
 export * from './step-run.entity';
 export * from './job.entity';
 export * from './webhook-secret.entity';
+export * from './notification-endpoint.entity';
+export * from './outbox-event.entity';

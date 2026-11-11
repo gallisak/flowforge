@@ -1,9 +1,11 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { QUEUE_LIMITS, QueueLimits } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Execution, Job, StepRun, Tenant, Workflow } from '../entities';
 import { TooManyRequestsException } from '../limits/too-many-requests';
+import { currentCorrelationId } from '../observability/log-context';
 
 const QUEUE_FULL_RETRY_AFTER_SECONDS = 30;
 
@@ -59,6 +61,7 @@ export class ExecutionsService {
         input: () => ':input',
         trigger,
         triggerKey,
+        correlationId: currentCorrelationId() ?? randomUUID(),
       })
       .setParameter('input', JSON.stringify(input))
       .orIgnore()

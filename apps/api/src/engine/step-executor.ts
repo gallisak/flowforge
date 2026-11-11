@@ -3,6 +3,7 @@ import { MAX_JSON_DEPTH, valueExceedsDepth } from '../common/json-depth';
 import { toStorable } from '../common/storable';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { StepDefinition } from '../entities';
+import { CORRELATION_HEADER } from '../observability/correlation';
 import {
   findDestinationError,
   InvalidRequestUrlError,
@@ -12,7 +13,7 @@ import {
   TooManyRedirectsError,
 } from './http/safe-http';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from './sandbox/transform-sandbox';
-import { renderTemplate, renderUrlTemplate, StepContext, UrlTemplateError } from './template';
+import { bodyFormatOf, renderBodyTemplate, renderTemplate, renderUrlTemplate, StepContext, UrlTemplateError } from './template';
 
 export class StepError extends Error {
   constructor(message: string, readonly retryable = true) {
@@ -29,6 +30,7 @@ export function isRetryableStatus(status: number): boolean {
 export interface StepRuntime {
   signal?: AbortSignal;
   idempotencyKey?: string;
+  correlationId?: string;
 }
 
 export function stepIdempotencyKey(executionId: string, stepId: string): string {
@@ -36,6 +38,7 @@ export function stepIdempotencyKey(executionId: string, stepId: string): string 
 }
 
 const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+const RESERVED_HEADERS = new Set([IDEMPOTENCY_HEADER.toLowerCase(), CORRELATION_HEADER.toLowerCase()]);
 export const LOG_MESSAGE_MAX_LENGTH = 2_048;
 
 export function sanitizeLogMessage(message: string): string {
@@ -110,17 +113,16 @@ export class StepExecutor implements OnApplicationShutdown {
   }
 
   private async http(step: Extract<StepDefinition, { type: 'http' }>, ctx: StepContext, runtime: StepRuntime): Promise<unknown> {
-    const { signal, idempotencyKey } = runtime;
-    const headers = Object.fromEntries(
-      Object.entries(step.headers ?? {}).filter(([name]) => name.toLowerCase() !== IDEMPOTENCY_HEADER.toLowerCase()),
-    );
+    const { signal, idempotencyKey, correlationId } = runtime;
+    const headers = Object.fromEntries(Object.entries(step.headers ?? {}).filter(([name]) => !RESERVED_HEADERS.has(name.toLowerCase())));
     if (idempotencyKey) headers[IDEMPOTENCY_HEADER] = idempotencyKey;
+    if (correlationId) headers[CORRELATION_HEADER] = correlationId;
     let res: SafeHttpResponse;
     try {
       res = await this.httpClient.request(renderUrlTemplate(step.url, ctx), {
         method: step.method ?? 'GET',
         headers,
-        body: step.body !== undefined ? renderTemplate(step.body, ctx) : undefined,
+        body: step.body !== undefined ? renderBodyTemplate(step.body, ctx, bodyFormatOf(step.body, step.headers)) : undefined,
         signal,
       });
     } catch (err) {

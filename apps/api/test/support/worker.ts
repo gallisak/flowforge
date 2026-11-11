@@ -2,6 +2,7 @@ import { INestApplicationContext } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { WorkerModule } from '../../src/app.module';
 import { JobRunnerService } from '../../src/engine/job-runner.service';
+import { OutboxDispatcher } from '../../src/outbox/outbox-dispatcher.service';
 import { AppProcess, spawnAppProcess } from './process';
 
 export interface InProcessWorkers {
@@ -15,6 +16,7 @@ export async function startInProcessWorkers(count: number, concurrency = 1): Pro
   for (let i = 0; i < count; i++) {
     const ctx = await NestFactory.createApplicationContext(WorkerModule, { logger: ['error'] });
     ctx.get(JobRunnerService).start(concurrency);
+    ctx.get(OutboxDispatcher).start();
     contexts.push(ctx);
   }
   return {

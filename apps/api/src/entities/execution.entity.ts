@@ -36,6 +36,9 @@ export class Execution {
   @Column({ type: 'varchar', length: 300, nullable: true })
   triggerKey: string | null;
 
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  correlationId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

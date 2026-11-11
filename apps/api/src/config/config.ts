@@ -1,12 +1,29 @@
 import { DatabaseTimeouts } from '../db/data-source';
+import { LOG_LEVELS, LogLevelName } from '../observability/logger';
 
 type Env = Record<string, string | undefined>;
 
 export type NodeEnv = 'development' | 'test' | 'production';
 
-export interface ApiConfig {
+export interface ObservabilityConfig {
+  logLevel: LogLevelName;
+  metricsPort: number;
+}
+
+export interface OutboxConfig {
+  pollIntervalMs: number;
+  batchSize: number;
+  leaseSeconds: number;
+  maxAttempts: number;
+  retryBaseMs: number;
+  retryCapMs: number;
+  timeoutMs: number;
+}
+
+export interface ApiConfig extends ObservabilityConfig {
   nodeEnv: NodeEnv;
   port: number;
+  metricsTopTenants: number;
   databaseUrl: string;
   databaseTimeouts: DatabaseTimeouts;
   adminToken: string;
@@ -16,7 +33,7 @@ export interface ApiConfig {
   tenantMaxQueuedJobs: number;
 }
 
-export interface WorkerConfig {
+export interface WorkerConfig extends ObservabilityConfig {
   nodeEnv: NodeEnv;
   databaseUrl: string;
   databaseTimeouts: DatabaseTimeouts;
@@ -34,9 +51,10 @@ export interface WorkerConfig {
   stepOutputMaxBytes: number;
   ssrfAllowlist: readonly string[];
   tenantMaxConcurrentJobs: number;
+  outbox: OutboxConfig;
 }
 
-export interface SchedulerConfig {
+export interface SchedulerConfig extends ObservabilityConfig {
   nodeEnv: NodeEnv;
   databaseUrl: string;
   databaseTimeouts: DatabaseTimeouts;
@@ -137,6 +155,37 @@ class EnvReader {
     return token;
   }
 
+  logLevel(): LogLevelName {
+    const raw = (this.env.LOG_LEVEL ?? 'info').toLowerCase();
+    if (!LOG_LEVELS.includes(raw as LogLevelName)) {
+      this.problems.push(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')}`);
+      return 'info';
+    }
+    return raw as LogLevelName;
+  }
+
+  observability(): ObservabilityConfig {
+    return { logLevel: this.logLevel(), metricsPort: this.integer('METRICS_PORT', 9_100, 0, 65_535) };
+  }
+
+  outbox(): OutboxConfig {
+    const retryBaseMs = this.integer('OUTBOX_RETRY_BASE_MS', 30_000, 10, 3_600_000);
+    const retryCapMs = this.integer('OUTBOX_RETRY_CAP_MS', 3_600_000, 10, 86_400_000);
+    if (retryCapMs < retryBaseMs) this.problems.push('OUTBOX_RETRY_CAP_MS must not be smaller than OUTBOX_RETRY_BASE_MS');
+    const leaseSeconds = this.integer('OUTBOX_LEASE_SECONDS', 30, 2, 3_600);
+    const timeoutMs = this.integer('OUTBOX_TIMEOUT_MS', 10_000, 100, 120_000);
+    if (timeoutMs >= leaseSeconds * 1_000) this.problems.push('OUTBOX_TIMEOUT_MS must be shorter than OUTBOX_LEASE_SECONDS');
+    return {
+      pollIntervalMs: this.integer('OUTBOX_POLL_INTERVAL_MS', 1_000, 50, 60_000),
+      batchSize: this.integer('OUTBOX_BATCH_SIZE', 10, 1, 100),
+      leaseSeconds,
+      maxAttempts: this.integer('OUTBOX_MAX_ATTEMPTS', 15, 1, 100),
+      retryBaseMs,
+      retryCapMs,
+      timeoutMs,
+    };
+  }
+
   allowlist(name: string): string[] {
     const entries = (this.env[name] ?? '')
       .split(',')
@@ -159,6 +208,8 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
   return read.done({
     nodeEnv,
     port: read.integer('PORT', 3000, 0, 65_535),
+    ...read.observability(),
+    metricsTopTenants: read.integer('METRICS_TOP_TENANTS', 20, 1, 1_000),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
     databaseTimeouts: read.databaseTimeouts(),
     adminToken: read.adminToken(nodeEnv),
@@ -175,6 +226,7 @@ export function loadSchedulerConfig(env: Env = process.env): SchedulerConfig {
     nodeEnv: read.nodeEnv(),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
     databaseTimeouts: read.databaseTimeouts(),
+    ...read.observability(),
     schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 5_000, 1_000, 3_600_000),
     schedulerMisfireGraceMs: read.integer('SCHEDULER_MISFIRE_GRACE_MS', 60_000, 1_000, 3_600_000),
     schedulerMaxCatchUpRuns: read.integer('SCHEDULER_MAX_CATCH_UP_RUNS', 100, 1, 1_000),
@@ -205,6 +257,8 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     stepOutputMaxBytes: read.integer('STEP_OUTPUT_MAX_BYTES', 1_048_576, 1_024, 16_777_216),
     ssrfAllowlist: read.allowlist('SSRF_ALLOWLIST'),
     tenantMaxConcurrentJobs: read.integer('TENANT_MAX_CONCURRENT_JOBS', 10, 1, 10_000),
+    ...read.observability(),
+    outbox: read.outbox(),
   });
 }
 
