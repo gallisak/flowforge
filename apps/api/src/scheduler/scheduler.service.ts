@@ -4,6 +4,7 @@ import { SCHEDULER_CONFIG, SchedulerConfig } from '../config/config';
 import { DueSchedule, TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
+import { TooManyRequestsException } from '../limits/too-many-requests';
 import { planFiring } from './cron-schedule';
 
 export function cronTriggerKey(workflowId: string, scheduledAt: Date): string {
@@ -78,16 +79,25 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
     if (plan.droppedMissedRuns) {
       this.logger.warn(`workflow ${schedule.id}: only the latest ${this.config.schedulerMaxCatchUpRuns} missed runs were started`);
     }
+    let started = 0;
     for (const scheduledAt of plan.fire) {
-      await this.executions.enqueueWithin(
-        em,
-        schedule,
-        { scheduledAt: scheduledAt.toISOString() },
-        'cron',
-        cronTriggerKey(schedule.id, scheduledAt),
-      );
+      try {
+        await this.executions.enqueueWithin(
+          em,
+          schedule,
+          { scheduledAt: scheduledAt.toISOString() },
+          'cron',
+          cronTriggerKey(schedule.id, scheduledAt),
+        );
+      } catch (error) {
+        if (!(error instanceof TooManyRequestsException) || started === 0) throw error;
+        this.logger.warn(`workflow ${schedule.id}: queue limit reached, ${plan.fire.length - started} scheduled runs postponed`);
+        await em.update(Workflow, { id: schedule.id, tenantId: schedule.tenantId }, { nextRunAt: scheduledAt });
+        return started;
+      }
+      started++;
     }
     await em.update(Workflow, { id: schedule.id, tenantId: schedule.tenantId }, { nextRunAt: plan.nextRunAt });
-    return plan.fire.length;
+    return started;
   }
 }
