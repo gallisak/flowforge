@@ -13,6 +13,8 @@ import { FairJobClaim1794320200000 } from './1794320200000-fair-job-claim';
 import { TenantLimits1794320300000 } from './1794320300000-tenant-limits';
 import { ContentionAwareClaim1794320400000 } from './1794320400000-contention-aware-claim';
 import { PurposeBuiltJobIndexes1794320500000 } from './1794320500000-purpose-built-job-indexes';
+import { PersistentSchedules1794320600000 } from './1794320600000-persistent-schedules';
+import { ClaimDueSchedules1794320700000 } from './1794320700000-claim-due-schedules';
 
 export const migrations = [
   Baseline1794305090749,
@@ -30,4 +32,6 @@ export const migrations = [
   TenantLimits1794320300000,
   ContentionAwareClaim1794320400000,
   PurposeBuiltJobIndexes1794320500000,
+  PersistentSchedules1794320600000,
+  ClaimDueSchedules1794320700000,
 ];

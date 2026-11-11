@@ -24,8 +24,8 @@ newQuickJSWASMModule().then((QuickJS) => {
     const runtime = QuickJS.newRuntime();
     runtime.setMemoryLimit(request.limits.memoryBytes);
     runtime.setMaxStackSize(request.limits.stackBytes);
-    runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + request.limits.timeoutMs));
     const vm = runtime.newContext();
+    runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + request.limits.timeoutMs));
     let reply;
     try {
       const input = vm.newString(request.input);

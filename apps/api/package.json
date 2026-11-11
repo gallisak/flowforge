@@ -9,6 +9,7 @@
     "build": "nest build",
     "start": "node dist/main",
     "start:worker": "node dist/worker",
+    "start:scheduler": "node dist/scheduler",
     "migrate": "node dist/migrate",
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/db/cli-data-source.ts",
     "start:dev": "nest start --watch",

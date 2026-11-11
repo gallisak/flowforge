@@ -3,7 +3,7 @@ import { join } from 'path';
 
 const API_ROOT = join(__dirname, '..', '..');
 
-export type AppEntrypoint = 'main' | 'worker' | 'migrate';
+export type AppEntrypoint = 'main' | 'worker' | 'scheduler' | 'migrate';
 
 export interface ProcessExit {
   code: number | null;

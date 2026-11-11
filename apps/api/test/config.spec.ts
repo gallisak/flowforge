@@ -1,4 +1,4 @@
-import { ConfigError, loadApiConfig, loadMigrationConfig, loadWorkerConfig } from '../src/config/config';
+import { ConfigError, loadApiConfig, loadMigrationConfig, loadSchedulerConfig, loadWorkerConfig } from '../src/config/config';
 
 const DATABASE_URL = 'postgres://flowforge_app:secret-password@localhost:5432/flowforge';
 const STRONG_TOKEN = 'a'.repeat(16) + 'b'.repeat(16) + 'c'.repeat(16);
@@ -22,7 +22,6 @@ describe('loadApiConfig', () => {
       databaseUrl: DATABASE_URL,
       databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
       adminToken: 'dev-admin-token',
-      schedulerTickMs: 30_000,
       webhookToleranceSeconds: 300,
       webhookSecretGraceSeconds: 86_400,
       tenantRateLimitPerMinute: 600,
@@ -63,7 +62,6 @@ describe('loadApiConfig', () => {
     ['PORT', 'abc'],
     ['PORT', '70000'],
     ['PORT', '1.5'],
-    ['SCHEDULER_TICK_MS', '10'],
     ['DB_CONNECT_TIMEOUT_MS', '0'],
     ['DB_STATEMENT_TIMEOUT_MS', 'forever'],
   ])('rejects %s=%s', (name, value) => {
@@ -97,6 +95,30 @@ describe('loadApiConfig', () => {
   it('returns an immutable config object', () => {
     const config = loadApiConfig({ DATABASE_URL, ADMIN_TOKEN: 'dev-admin-token' });
     expect(Object.isFrozen(config)).toBe(true);
+  });
+});
+
+describe('loadSchedulerConfig', () => {
+  it('applies defaults and does not require an admin token', () => {
+    expect(loadSchedulerConfig({ DATABASE_URL })).toEqual({
+      nodeEnv: 'development',
+      databaseUrl: DATABASE_URL,
+      databaseTimeouts: { connectTimeoutMs: 5_000, statementTimeoutMs: 15_000 },
+      schedulerTickMs: 5_000,
+      schedulerMisfireGraceMs: 60_000,
+      schedulerMaxCatchUpRuns: 100,
+      tenantMaxQueuedJobs: 10_000,
+    });
+  });
+
+  it.each([
+    ['SCHEDULER_TICK_MS', '10'],
+    ['SCHEDULER_MISFIRE_GRACE_MS', '0'],
+    ['SCHEDULER_MAX_CATCH_UP_RUNS', '5000'],
+  ])('rejects %s=%s', (name, value) => {
+    expect(problemsOf(() => loadSchedulerConfig({ DATABASE_URL, [name]: value }))).toEqual([
+      expect.stringMatching(new RegExp(`^${name} must be an integer`)),
+    ]);
   });
 });
 

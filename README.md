@@ -9,7 +9,8 @@ only queue and state store.
 docker compose up --build
 ```
 
-API: http://localhost:3000, frontend: http://localhost:3001. Configuration: `apps/api/.env.example`.
+API: http://localhost:3000, frontend: http://localhost:3001. Workers and schedulers run as separate
+services, two replicas each. Configuration: `apps/api/.env.example`.
 
 ## Tests
 
@@ -40,6 +41,10 @@ reproduction of a finding fails before its fix and passes after it.
 | F-11 | Webhook signatures are checked against a re-serialized body | `test/integration/findings/F-11-raw-body-signature.int-spec.ts` |
 | F-12 | Webhook signatures are compared with a timing leak | `test/integration/findings/F-12-constant-time-signature.int-spec.ts` |
 | F-13 | Replayed and stale webhooks start new executions | `test/integration/findings/F-13-webhook-replay.int-spec.ts` |
+| F-14 | Every scheduler instance fires the same occurrence | `test/integration/findings/F-14-scheduler-multi-instance.int-spec.ts` |
+| F-15 | Schedules ignore their time zone | `test/integration/findings/F-15-schedule-time-zones.int-spec.ts` |
+| F-16 | Runs missed while the scheduler is down are lost | `test/integration/findings/F-16-missed-runs-after-restart.int-spec.ts` |
+| F-17 | A slow scheduler tick overlaps the next and fires twice | `test/integration/findings/F-17-overlapping-ticks.int-spec.ts` |
 | F-18 | A retry repeats steps that already succeeded | `test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts` |
 | F-19 | A running execution picks up edits of its workflow | `test/integration/findings/F-19-workflow-version-snapshot.int-spec.ts` |
 | F-20 | A delay holds a worker slot and restarts after a crash | `test/integration/findings/F-20-durable-delay.int-spec.ts` |
