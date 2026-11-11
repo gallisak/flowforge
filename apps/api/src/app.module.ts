@@ -10,6 +10,8 @@ import { JobRunnerService } from './engine/job-runner.service';
 import { OutboxDispatcher } from './outbox/outbox-dispatcher.service';
 import { StepExecutor } from './engine/step-executor';
 import { ExecutionsController } from './executions/executions.controller';
+import { ExecutionEventsHub } from './executions/execution-events.hub';
+import { ExecutionStreamService } from './executions/execution-stream.service';
 import { ExecutionsService } from './executions/executions.service';
 import { SchedulerService } from './scheduler/scheduler.service';
 import { TenantsController } from './tenants/tenants.controller';
@@ -47,6 +49,8 @@ import { WorkflowsService } from './workflows/workflows.service';
     WebhookSecretsService,
     RateLimitService,
     NotificationsService,
+    ExecutionEventsHub,
+    ExecutionStreamService,
   ],
 })
 export class AppModule {}

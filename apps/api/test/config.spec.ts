@@ -25,6 +25,7 @@ describe('loadApiConfig', () => {
       logLevel: 'info',
       metricsPort: 9_100,
       metricsTopTenants: 20,
+      executionStreamsPerTenant: 20,
       webhookToleranceSeconds: 300,
       webhookSecretGraceSeconds: 86_400,
       tenantRateLimitPerMinute: 600,

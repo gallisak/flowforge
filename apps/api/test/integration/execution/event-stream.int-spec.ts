@@ -1,0 +1,136 @@
+import { INestApplication } from '@nestjs/common';
+import { AddressInfo } from 'net';
+import request from 'supertest';
+import { ExecutionEventsHub } from '../../../src/executions/execution-events.hub';
+import { createTestApp } from '../../support/app';
+import { useIntegrationContext } from '../../support/context';
+import { seedTenant, SeededTenant } from '../../support/db';
+import { eventually } from '../../support/eventually';
+import { EventStream, openEventStream } from '../../support/sse';
+import { InProcessWorkers, startInProcessWorkers } from '../../support/worker';
+
+describe('execution event stream', () => {
+  const ctx = useIntegrationContext();
+  let app: INestApplication;
+  let baseUrl: string;
+  let workers: InProcessWorkers | undefined;
+  let tenant: SeededTenant;
+  const opened: EventStream[] = [];
+  const saved = process.env.EXECUTION_STREAMS_PER_TENANT;
+
+  const statusesOf = (stream: EventStream) => stream.events.filter((e) => e.event === 'snapshot').map((e) => JSON.parse(e.data).status);
+  const stream = async (id: string, apiKey = tenant.apiKey) => {
+    const opening = await openEventStream(`${baseUrl}/executions/${id}/events`, { 'x-api-key': apiKey });
+    opened.push(opening);
+    return opening;
+  };
+
+  async function createRun(steps: unknown[]): Promise<string> {
+    const workflow = await request(app.getHttpServer())
+      .post('/workflows')
+      .set('x-api-key', tenant.apiKey)
+      .send({ name: 'streamed', steps })
+      .expect(201);
+    const run = await request(app.getHttpServer()).post(`/workflows/${workflow.body.id}/run`).set('x-api-key', tenant.apiKey).send({}).expect(201);
+    return run.body.id;
+  }
+
+  beforeAll(async () => {
+    process.env.EXECUTION_STREAMS_PER_TENANT = '3';
+    app = await createTestApp();
+    await app.listen(0, '127.0.0.1');
+    baseUrl = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
+    tenant = await seedTenant(ctx.ds, 'streamed');
+  });
+
+  afterEach(async () => {
+    for (const s of opened.splice(0)) s.close();
+    await workers?.stop();
+    workers = undefined;
+  });
+
+  afterAll(async () => {
+    await app?.close();
+    if (saved === undefined) delete process.env.EXECUTION_STREAMS_PER_TENANT;
+    else process.env.EXECUTION_STREAMS_PER_TENANT = saved;
+  });
+
+  it('sends a snapshot on every change and closes the stream when the execution finishes', async () => {
+    const id = await createRun([
+      { id: 'first', type: 'log', message: 'one' },
+      { id: 'pause', type: 'delay', ms: 300 },
+      { id: 'second', type: 'log', message: 'two' },
+    ]);
+    const events = await stream(id);
+    expect(events.status).toBe(200);
+    workers = await startInProcessWorkers(1);
+
+    await events.ended;
+
+    const statuses = statusesOf(events);
+    expect(statuses[0]).toBe('pending');
+    expect(statuses).toContain('waiting');
+    expect(statuses[statuses.length - 1]).toBe('succeeded');
+    const last = JSON.parse(events.events[events.events.length - 1].data);
+    expect(last.steps.map((s: { stepId: string; status: string }) => `${s.stepId}:${s.status}`)).toEqual([
+      'first:succeeded',
+      'pause:succeeded',
+      'second:succeeded',
+    ]);
+  });
+
+  it('sends one final snapshot and closes at once for a finished execution', async () => {
+    const id = await createRun([{ id: 'only', type: 'log', message: 'x' }]);
+    workers = await startInProcessWorkers(1);
+    await eventually(async () => {
+      const res = await request(app.getHttpServer()).get(`/executions/${id}`).set('x-api-key', tenant.apiKey);
+      expect(res.body.status).toBe('succeeded');
+    });
+
+    const events = await stream(id);
+    await events.ended;
+
+    expect(statusesOf(events)).toEqual(['succeeded']);
+  });
+
+  it('answers 404 for an execution of another tenant and 401 without a key', async () => {
+    const id = await createRun([{ id: 'only', type: 'log', message: 'x' }]);
+    const other = await seedTenant(ctx.ds, 'stranger');
+
+    const foreign = await stream(id, other.apiKey);
+    const anonymous = await stream(id, '');
+    await Promise.all([foreign.ended, anonymous.ended]);
+
+    expect(foreign.status).toBe(404);
+    expect(foreign.events).toEqual([]);
+    expect(anonymous.status).toBe(401);
+  });
+
+  it('removes its listener when the client goes away', async () => {
+    const hub = app.get(ExecutionEventsHub);
+    const id = await createRun([{ id: 'only', type: 'log', message: 'x' }]);
+    const before = hub.subscriberCount;
+
+    const events = await stream(id);
+    await eventually(() => expect(hub.subscriberCount).toBe(before + 1));
+    events.close();
+
+    await eventually(() => expect(hub.subscriberCount).toBe(before));
+  });
+
+  it('limits the number of open streams per tenant', async () => {
+    const id = await createRun([{ id: 'only', type: 'log', message: 'x' }]);
+    const open = await Promise.all([stream(id), stream(id), stream(id)]);
+    expect(open.map((s) => s.status)).toEqual([200, 200, 200]);
+
+    const refused = await stream(id);
+    await refused.ended;
+    expect(refused.status).toBe(429);
+
+    open[0].close();
+    await eventually(async () => {
+      const again = await stream(id);
+      expect(again.status).toBe(200);
+    });
+  });
+});

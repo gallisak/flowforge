@@ -1,29 +1,31 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { StreamState, useExecutionStream } from '@/lib/use-execution-stream';
 
-interface Step { id: string; stepIndex: number; stepId: string; status: string; error: string | null }
-interface Execution { id: string; status: string; error: string | null; steps: Step[] }
+const CONNECTION_LABELS: Record<StreamState, string> = {
+  connecting: 'Connecting…',
+  live: 'Live',
+  reconnecting: 'Reconnecting…',
+  closed: 'Finished',
+  error: 'Disconnected',
+};
 
 export default function ExecutionPage({ params }: { params: { id: string } }) {
-  const [execution, setExecution] = useState<Execution | null>(null);
+  const { execution, state, error } = useExecutionStream(params.id);
 
-  useEffect(() => {
-    setInterval(async () => {
-      const res = await fetch(`/api/proxy/executions/${params.id}`);
-      if (res.ok) setExecution(await res.json());
-    }, 1000);
-  }, [params.id]);
-
+  if (error) return <p role="alert">{error}</p>;
   if (!execution) return <p>Loading…</p>;
   return (
     <>
       <h1>Execution {execution.id.slice(0, 8)}</h1>
       <p>Status: {execution.status}</p>
-      {execution.error && <p style={{ color: 'crimson' }}>{execution.error}</p>}
+      <p>{CONNECTION_LABELS[state]}</p>
+      {execution.error && <p role="alert">{execution.error}</p>}
       <ol>
         {execution.steps.map((s) => (
-          <li key={s.id}>{s.stepId} — {s.status}</li>
+          <li key={s.id}>
+            {s.stepId} — {s.status}
+          </li>
         ))}
       </ol>
     </>
