@@ -220,7 +220,7 @@ flowchart TD
 - **Time zones:** `cron-parser` lists wall-clock times and `src/scheduler/zoned-cron.ts` maps them to the
   zone with `Intl` offsets: with fixed hours a missing time moves forward and a repeated one runs once;
   with every hour (`*`, `*/n`, `0-23`) the schedule follows elapsed time. Tested over two years in 17
-  zones, including 30-minute, 2-hour and midnight changes.
+  zone and time cases in 11 zones, including 30-minute, 2-hour and midnight changes.
 - **Why:** the row lock and the unique key each prevent a second run on their own.
 - **Alternatives:** leader election with an advisory lock (one busy instance, failover waits for the session).
 - **Limits:** the start moment depends on the scheduler host clock; crons more often than once a minute
