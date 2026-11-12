@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, NotFoundException, PreconditionFailedException } from '@nestjs/common';
 import { EntityManager } from 'typeorm';
 import { WORKFLOW_LIMITS, WorkflowLimits } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
@@ -7,6 +7,7 @@ import { decodeCursor, encodeCursor } from '../executions/execution-cursor';
 import { nextOccurrence } from '../scheduler/cron-schedule';
 import { validateSteps } from './definition';
 import { validateSchedule } from './schedule';
+import { matchesPrecondition, WORKFLOW_CHANGED } from './workflow-precondition';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -98,9 +99,10 @@ export class WorkflowsService {
     });
   }
 
-  update(tenantId: string, id: string, input: UpdateWorkflowDto): Promise<Workflow> {
+  update(tenantId: string, id: string, input: UpdateWorkflowDto, ifMatch?: string): Promise<Workflow> {
     return this.db.run(tenantId, async (em) => {
       const wf = await this.findOwned(em, tenantId, id, true);
+      if (ifMatch !== undefined && !matchesPrecondition(ifMatch, wf.version)) throw new PreconditionFailedException(WORKFLOW_CHANGED);
       if (input.cron !== undefined || input.timezone !== undefined) {
         validateSchedule(input.cron === undefined ? wf.cron : input.cron, input.timezone ?? wf.timezone);
       }

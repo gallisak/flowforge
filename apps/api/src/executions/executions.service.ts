@@ -46,6 +46,11 @@ export interface ExecutionPage {
   nextCursor: string | null;
 }
 
+export interface EnqueuedExecution {
+  execution: Execution;
+  created: boolean;
+}
+
 @Injectable()
 export class ExecutionsService {
   private readonly logger = new Logger(ExecutionsService.name);
@@ -61,7 +66,7 @@ export class ExecutionsService {
     trigger: Execution['trigger'],
     triggerKey: string | null = null,
   ): Promise<Execution> {
-    return this.db.run(workflow.tenantId, (em) => this.enqueueWithin(em, workflow, input, trigger, triggerKey));
+    return this.db.run(workflow.tenantId, async (em) => (await this.enqueueWithin(em, workflow, input, trigger, triggerKey)).execution);
   }
 
   async enqueueWithin(
@@ -70,7 +75,7 @@ export class ExecutionsService {
     input: Record<string, unknown>,
     trigger: Execution['trigger'],
     triggerKey: string | null = null,
-  ): Promise<Execution> {
+  ): Promise<EnqueuedExecution> {
     const current = await em.findOne(Workflow, {
       where: { id: workflow.id, tenantId: workflow.tenantId },
       lock: { mode: 'pessimistic_read' },
@@ -78,7 +83,7 @@ export class ExecutionsService {
     if (!current) throw new NotFoundException('Workflow not found');
     if (triggerKey) {
       const existing = await em.findOne(Execution, { where: { tenantId: workflow.tenantId, triggerKey } });
-      if (existing) return existing;
+      if (existing) return { execution: existing, created: false };
     }
     const tenant = await em.findOneOrFail(Tenant, { where: { id: workflow.tenantId } });
     const maxQueued = tenant.maxQueuedJobs ?? this.limits.tenantMaxQueuedJobs;
@@ -110,11 +115,11 @@ export class ExecutionsService {
     const id: string | undefined = inserted.raw[0]?.id;
     if (!id) {
       if (!triggerKey) throw new Error('the execution was not inserted');
-      return em.findOneOrFail(Execution, { where: { tenantId: workflow.tenantId, triggerKey } });
+      return { execution: await em.findOneOrFail(Execution, { where: { tenantId: workflow.tenantId, triggerKey } }), created: false };
     }
     await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: id, maxAttempts: this.limits.jobMaxAttempts }));
     this.logger.log({ msg: 'execution created', executionId: id, workflowId: workflow.id, tenantId: workflow.tenantId, trigger });
-    return em.findOneOrFail(Execution, { where: { id } });
+    return { execution: await em.findOneOrFail(Execution, { where: { id } }), created: true };
   }
 
   list(tenantId: string, filter: ExecutionListFilter = {}): Promise<ExecutionPage> {

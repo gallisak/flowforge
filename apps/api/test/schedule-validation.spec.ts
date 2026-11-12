@@ -29,6 +29,10 @@ describe('validateSchedule', () => {
     expect(() => validateSchedule(cron, 'UTC', NOW)).toThrow(BadRequestException);
   });
 
+  it('rejects an expression that runs out of future occurrences however fast the machine is', () => {
+    expect(() => validateSchedule('0 0 * 2 1#5', 'UTC', new Date('2026-11-12T00:00:00Z'))).toThrow('cron must be a valid cron expression');
+  });
+
   it('rejects an expression that is too long', () => {
     expect(() => validateSchedule(`0 0 * * ${'1,'.repeat(60)}1`, 'UTC', NOW)).toThrow(BadRequestException);
   });

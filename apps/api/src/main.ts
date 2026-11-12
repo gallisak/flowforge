@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DataSource } from 'typeorm';
 import { AppModule } from './app.module';
 import { configureApp } from './app.setup';
@@ -9,7 +10,8 @@ import { registerDatabaseGauges } from './observability/metrics';
 
 async function bootstrap() {
   const config = loadConfigOrExit(() => loadApiConfig());
-  const app = await NestFactory.create(AppModule, { bufferLogs: true, bodyParser: false });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true, bodyParser: false });
+  app.set('trust proxy', config.trustProxy);
   const logger = useStructuredLogs(app, 'api', config);
   configureApp(app);
   app.enableShutdownHooks();

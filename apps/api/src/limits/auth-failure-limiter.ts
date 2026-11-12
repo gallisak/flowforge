@@ -1,4 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { isIP } from 'net';
+import { safeEqual } from '../common/safe-equal';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { TooManyRequestsException } from './too-many-requests';
 
@@ -6,6 +8,15 @@ const MAX_TRACKED_ADDRESSES = 10_000;
 const MAX_TRUSTED_KEYS = 10_000;
 const TRUSTED_KEY_MS = 5 * 60 * 1000;
 const WINDOW_MS = 60_000;
+
+export const CLIENT_ADDRESS_HEADER = 'x-client-address';
+export const CLIENT_ADDRESS_SECRET_HEADER = 'x-client-address-secret';
+
+export interface ClientRequest {
+  headers: Record<string, string | string[] | undefined>;
+  ip?: string;
+  socket?: { remoteAddress?: string };
+}
 
 interface Bucket {
   tokens: number;
@@ -23,9 +34,24 @@ export class AuthFailureLimiter {
   private readonly buckets = new Map<string, Bucket>();
   private readonly trustedKeys = new Map<string, number>();
   private readonly capacity: number;
+  private readonly clientAddressSecret: string;
 
   constructor(@Inject(API_CONFIG) config: ApiConfig) {
     this.capacity = config.authFailuresPerMinute;
+    this.clientAddressSecret = config.clientAddressSecret;
+  }
+
+  clientAddressOf(req: ClientRequest): string {
+    const forwarded = req.headers[CLIENT_ADDRESS_HEADER];
+    const secret = req.headers[CLIENT_ADDRESS_SECRET_HEADER];
+    const trusted =
+      this.clientAddressSecret.length > 0 &&
+      typeof forwarded === 'string' &&
+      typeof secret === 'string' &&
+      isIP(forwarded) !== 0 &&
+      safeEqual(secret, this.clientAddressSecret);
+    if (trusted) return forwarded;
+    return req.ip ?? req.socket?.remoteAddress ?? 'unknown';
   }
 
   private tokensOf(address: string, now: number): number {
@@ -51,8 +77,4 @@ export class AuthFailureLimiter {
   recordSuccess(keyHash: string): void {
     remember(this.trustedKeys, keyHash, Date.now() + TRUSTED_KEY_MS, MAX_TRUSTED_KEYS);
   }
-}
-
-export function clientAddressOf(req: { ip?: string; socket?: { remoteAddress?: string } }): string {
-  return req.ip ?? req.socket?.remoteAddress ?? 'unknown';
 }

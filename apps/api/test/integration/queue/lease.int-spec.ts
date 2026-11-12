@@ -15,7 +15,11 @@ describe('job lease', () => {
   const ctx = useIntegrationContext();
   let receiver: Receiver;
   let workers: InProcessWorkers | undefined;
-  const saved = { lease: process.env.WORKER_LEASE_SECONDS, reaper: process.env.WORKER_REAPER_INTERVAL_MS };
+  const saved = {
+    lease: process.env.WORKER_LEASE_SECONDS,
+    statement: process.env.DB_STATEMENT_TIMEOUT_MS,
+    reaper: process.env.WORKER_REAPER_INTERVAL_MS,
+  };
 
   async function enqueueSlowJob(path: string): Promise<{ execution: Execution; job: Job }> {
     const { tenant } = await seedTenant(ctx.ds, `lease-${path}`);
@@ -27,6 +31,7 @@ describe('job lease', () => {
 
   beforeAll(async () => {
     process.env.WORKER_LEASE_SECONDS = String(LEASE_SECONDS);
+    process.env.DB_STATEMENT_TIMEOUT_MS = '1500';
     process.env.WORKER_REAPER_INTERVAL_MS = '200';
     receiver = await startReceiver((req, res) => {
       setTimeout(() => res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}'), SLOW_STEP_MS);
@@ -42,6 +47,7 @@ describe('job lease', () => {
     await receiver?.close();
     for (const [name, value] of [
       ['WORKER_LEASE_SECONDS', saved.lease],
+      ['DB_STATEMENT_TIMEOUT_MS', saved.statement],
       ['WORKER_REAPER_INTERVAL_MS', saved.reaper],
     ] as const) {
       if (value === undefined) delete process.env[name];

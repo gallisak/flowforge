@@ -5,6 +5,7 @@ import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { StatusBadge } from '@/components/status-badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -49,7 +50,7 @@ function Expandable({ label, value }: { label: string; value: unknown }) {
 }
 
 export function ExecutionView({ id }: { id: string }) {
-  const { execution, state, error } = useExecutionStream(id);
+  const { execution, state, error, unauthenticated } = useExecutionStream(id);
   const connection = CONNECTION[state];
 
   return (
@@ -62,7 +63,14 @@ export function ExecutionView({ id }: { id: string }) {
       {error && (
         <Alert variant={state === 'reconnecting' ? 'default' : 'destructive'}>
           <AlertTitle>{state === 'reconnecting' ? 'Connection lost, reconnecting…' : 'Could not follow this execution'}</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription className="flex flex-wrap items-center gap-3">
+            <span>{error}</span>
+            {unauthenticated && (
+              <Button asChild size="sm" variant="outline">
+                <Link href="/connect">Connect</Link>
+              </Button>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 
@@ -77,11 +85,13 @@ export function ExecutionView({ id }: { id: string }) {
         <>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="font-mono text-2xl font-semibold tracking-tight">Execution {shortId(execution.id)}</h1>
-            <StatusBadge status={execution.status} />
-            <span className="ml-auto inline-flex items-center gap-2 text-sm text-muted-foreground">
-              <span className={cn('h-2 w-2 rounded-full', connection.tone)} />
-              {connection.label}
-            </span>
+            <div role="status" aria-live="polite" aria-atomic="true" className="flex flex-1 flex-wrap items-center gap-3">
+              <StatusBadge status={execution.status} />
+              <span className="ml-auto inline-flex items-center gap-2 text-sm text-muted-foreground">
+                <span className={cn('h-2 w-2 rounded-full', connection.tone)} aria-hidden="true" />
+                {connection.label}
+              </span>
+            </div>
           </div>
 
           {execution.error && (

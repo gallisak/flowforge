@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { MAX_JSON_DEPTH, valueExceedsDepth } from '../common/json-depth';
-import { toStorable } from '../common/storable';
+import { toStorable, truncatedText } from '../common/storable';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { StepDefinition } from '../entities';
 import { CORRELATION_HEADER } from '../observability/correlation';
@@ -14,6 +14,7 @@ import {
 } from './http/safe-http';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from './sandbox/transform-sandbox';
 import {
+  BodyTemplateError,
   bodyFormatOf,
   renderBodyTemplate,
   renderLogMessage,
@@ -144,14 +145,14 @@ export class StepExecutor implements OnApplicationShutdown {
     try {
       return { status: res.status, body: JSON.parse(res.body) };
     } catch {
-      return { status: res.status, body: res.body.slice(0, 10_000) };
+      return { status: res.status, body: truncatedText(res.body, 10_000) };
     }
   }
 
   private httpFailure(err: unknown): StepError {
     const blocked = findDestinationError(err);
     if (blocked) return new StepError(blocked.message, false);
-    const permanent = [InvalidRequestUrlError, UrlTemplateError, TemplateTooLargeError, TooManyRedirectsError, ResponseTooLargeError];
+    const permanent = [InvalidRequestUrlError, UrlTemplateError, BodyTemplateError, TemplateTooLargeError, TooManyRedirectsError, ResponseTooLargeError];
     if (permanent.some((type) => err instanceof type)) return new StepError((err as Error).message, false);
     if (REJECTED_REQUEST_CODES.has((err as { code?: string }).code ?? '')) return new StepError('http request is invalid', false);
     const name = (err as Error).name;

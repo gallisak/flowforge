@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 setting() {
-  grep "^$1=" "$ROOT/.env" | cut -d= -f2- || true
+  grep "^$1=" "$ROOT/.env" | tail -n 1 | cut -d= -f2- | sed -E "s/^[[:space:]]*(\"(.*)\"|'(.*)')[[:space:]]*$/\\2\\3/" || true
 }
 API_PORT="${API_PORT:-$(setting API_PORT)}"
 WEB_PORT="${WEB_PORT:-$(setting WEB_PORT)}"

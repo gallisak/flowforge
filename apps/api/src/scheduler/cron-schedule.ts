@@ -92,7 +92,7 @@ export function planFiring(
   if (policy === 'all') catchUp = missed;
   if (policy === 'once' && onTime.length === 0) catchUp = missed.slice(-1);
 
-  const missedTotal = countOccurrences(schedule, nextRunAt, graceStart, SKIPPED_RUNS_COUNT_CAP);
+  const missedTotal = countOccurrences(schedule, nextRunAt, graceStart, SKIPPED_RUNS_COUNT_CAP + catchUp.length);
   return {
     fire: [...catchUp, ...onTime],
     skippedRuns: Math.max(0, missedTotal.count - catchUp.length),

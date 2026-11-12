@@ -61,6 +61,18 @@ describe('connect route', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a line break', 'ff_key\nX-Injected: 1'],
+    ['a character outside Latin-1', 'ff_key☃'],
+    ['a space inside', 'ff key'],
+  ])('refuses a key with %s without calling the API', async (_case, apiKey) => {
+    const res = await POST(make('POST', { apiKey }));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).message).toBe('API key contains characters that are not allowed');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('refuses an oversized body without calling the API', async () => {
     const res = await POST(make('POST', { apiKey: 'ff_valid', padding: 'x'.repeat(MAX_CONNECT_BODY_BYTES) }));
 

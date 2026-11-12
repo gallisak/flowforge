@@ -1,4 +1,4 @@
-import { Execution, Job, StepRun } from '../../../src/entities';
+import { Execution, Job, StepRun, Workflow } from '../../../src/entities';
 import { useIntegrationContext } from '../../support/context';
 import { seedTenant, seedWorkflow } from '../../support/db';
 import { eventually } from '../../support/eventually';
@@ -43,6 +43,22 @@ describe('durable timers', () => {
       status: 'waiting',
       attempts: 1,
     });
+  });
+
+  it('fails a sleeping step together with its execution when the workflow is deleted meanwhile', async () => {
+    const { execution, job } = await enqueue('deleted-while-sleeping', 60_000);
+    workers = await startInProcessWorkers(1);
+    await eventually(async () =>
+      expect(await ctx.ds.getRepository(StepRun).findOneByOrFail({ executionId: execution.id })).toMatchObject({ status: 'waiting' }),
+    );
+
+    await ctx.ds.getRepository(Workflow).delete(execution.workflowId);
+    await ctx.ds.getRepository(Job).update(job.id, { runAt: new Date(Date.now() - 1_000) });
+
+    await eventually(async () =>
+      expect(await ctx.ds.getRepository(Execution).findOneByOrFail({ id: execution.id })).toMatchObject({ status: 'failed' }),
+    );
+    expect(await ctx.ds.getRepository(StepRun).findOneByOrFail({ executionId: execution.id })).toMatchObject({ status: 'failed' });
   });
 
   it('completes a zero-length delay and records the waited time', async () => {

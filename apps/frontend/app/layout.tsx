@@ -1,6 +1,8 @@
 import './globals.css';
 import { SiteHeader } from '@/components/site-header';
 
+export const dynamic = 'force-dynamic';
+
 export const metadata = { title: 'FlowForge' };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

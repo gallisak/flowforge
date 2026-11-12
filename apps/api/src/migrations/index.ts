@@ -30,6 +30,9 @@ import { WatchedExecutionNotifications1794321850000 } from './1794321850000-watc
 import { DataRetention1794321900000 } from './1794321900000-data-retention';
 import { TenantLimitChecks1794322000000 } from './1794322000000-tenant-limit-checks';
 import { NotificationListIndexes1794322100000 } from './1794322100000-notification-list-indexes';
+import { TenantConsistentReferences1794322200000 } from './1794322200000-tenant-consistent-references';
+import { BoundedMaintenance1794322300000 } from './1794322300000-bounded-maintenance';
+import { IdleTenantClaims1794322400000 } from './1794322400000-idle-tenant-claims';
 
 export const migrations = [
   Baseline1794305090749,
@@ -64,4 +67,7 @@ export const migrations = [
   DataRetention1794321900000,
   TenantLimitChecks1794322000000,
   NotificationListIndexes1794322100000,
+  TenantConsistentReferences1794322200000,
+  BoundedMaintenance1794322300000,
+  IdleTenantClaims1794322400000,
 ];

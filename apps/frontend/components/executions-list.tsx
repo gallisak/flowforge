@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { apiRequest } from '@/lib/api-client';
-import { ApiError } from '@/lib/api-error';
+import { ApiError, UNEXPECTED_RESPONSE } from '@/lib/api-error';
 import { formatDateTime, formatDuration, shortId } from '@/lib/format';
 import { EXECUTION_STATUSES, ExecutionSummaryDto, WorkflowSummaryDto } from '@/lib/types';
 
@@ -20,17 +20,17 @@ const ANY = 'any';
 const WORKFLOW_PAGE_SIZE = 200;
 const MAX_WORKFLOW_PAGES = 25;
 
-async function allWorkflows(signal: AbortSignal): Promise<WorkflowSummaryDto[]> {
+async function loadWorkflows(signal: AbortSignal, onPage: (loaded: WorkflowSummaryDto[]) => void): Promise<void> {
   const all: WorkflowSummaryDto[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < MAX_WORKFLOW_PAGES; page++) {
     const query: string = `/workflows?limit=${WORKFLOW_PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
     const { data, headers } = await apiRequest<WorkflowSummaryDto[]>(query, { signal });
     all.push(...data);
+    if (!signal.aborted) onPage([...all]);
     cursor = headers.get('x-next-cursor');
     if (!cursor) break;
   }
-  return all;
 }
 
 export interface ExecutionFilters {
@@ -48,7 +48,22 @@ function queryOf(filters: ExecutionFilters, cursor?: string): string {
   return params.toString();
 }
 
-export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }) {
+function useWorkflows(): WorkflowSummaryDto[] {
+  const [workflows, setWorkflows] = useState<WorkflowSummaryDto[]>([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    loadWorkflows(controller.signal, setWorkflows).catch(() => undefined);
+    return () => controller.abort();
+  }, []);
+  return workflows;
+}
+
+export function ExecutionsList({ filters }: { filters: ExecutionFilters }) {
+  const workflows = useWorkflows();
+  return <FilteredExecutions key={`${filters.status ?? ''}|${filters.workflowId ?? ''}`} filters={filters} workflows={workflows} />;
+}
+
+function FilteredExecutions({ filters: given, workflows }: { filters: ExecutionFilters; workflows: WorkflowSummaryDto[] }) {
   const filters = useMemo<ExecutionFilters>(() => ({ status: given.status, workflowId: given.workflowId }), [given.status, given.workflowId]);
   const router = useRouter();
   const pathname = usePathname();
@@ -57,7 +72,6 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
   const [phase, setPhase] = useState<Phase>('loading');
   const [failure, setFailure] = useState<ApiError | null>(null);
   const [failedCursor, setFailedCursor] = useState<string | undefined>(undefined);
-  const [workflows, setWorkflows] = useState<WorkflowSummaryDto[]>([]);
   const inFlight = useRef<AbortController | null>(null);
 
   const load = useCallback(
@@ -76,7 +90,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
         setPhase('ready');
       } catch (e) {
         if (controller.signal.aborted) return;
-        setFailure(e instanceof ApiError ? e : new ApiError(0, ['The API is not reachable']));
+        setFailure(e instanceof ApiError ? e : new ApiError(0, [UNEXPECTED_RESPONSE]));
         setFailedCursor(cursor);
         setPhase('error');
       }
@@ -88,12 +102,6 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
     void load();
     return () => inFlight.current?.abort();
   }, [load]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    allWorkflows(controller.signal).then(setWorkflows, () => undefined);
-    return () => controller.abort();
-  }, []);
 
   const names = new Map(workflows.map((w) => [w.id, w.name]));
 

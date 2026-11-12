@@ -1,4 +1,5 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Execution } from './execution.entity';
 
 export type StepRunStatus = 'running' | 'waiting' | 'succeeded' | 'failed';
 
@@ -13,6 +14,13 @@ export class StepRun {
 
   @Column('uuid')
   executionId: string;
+
+  @ManyToOne(() => Execution, { onDelete: 'CASCADE' })
+  @JoinColumn([
+    { name: 'tenantId', referencedColumnName: 'tenantId', foreignKeyConstraintName: 'FK_step_runs_execution' },
+    { name: 'executionId', referencedColumnName: 'id', foreignKeyConstraintName: 'FK_step_runs_execution' },
+  ])
+  execution?: Execution;
 
   @Column('int')
   stepIndex: number;

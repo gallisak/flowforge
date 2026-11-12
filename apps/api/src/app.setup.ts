@@ -2,7 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { IncomingMessage, ServerResponse } from 'http';
 import { jsonTextExceedsDepth, MAX_JSON_DEPTH } from './common/json-depth';
-import { rejectNulReviver } from './common/storable';
+import { rejectUnstorableJson } from './common/storable';
 import { ApiExceptionFilter } from './common/api-exception.filter';
 import { assignRequestId, enterRequestContext } from './observability/correlation';
 
@@ -39,9 +39,9 @@ function acceptOnlyJsonBodies(req: IncomingMessage, res: ServerResponse, next: (
 export function configureApp(app: INestApplication): INestApplication {
   app.use(assignRequestId);
   app.use(acceptOnlyJsonBodies);
-  (app as NestExpressApplication).useBodyParser('json', { inflate: false, reviver: rejectNulReviver, verify: keepRawBodyAndRejectDeepJson });
+  (app as NestExpressApplication).useBodyParser('json', { inflate: false, reviver: rejectUnstorableJson, verify: keepRawBodyAndRejectDeepJson });
   app.use(enterRequestContext);
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new ApiExceptionFilter());
   return app;
 }

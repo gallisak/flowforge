@@ -11,7 +11,7 @@ export default async function ExecutionsPage({ searchParams }: { searchParams: P
   return (
     <>
       <PageHeader title="Executions" description="Newest first. Open an execution to follow it live." />
-      <ExecutionsList key={`${status ?? ''}|${workflowId ?? ''}`} filters={{ status, workflowId }} />
+      <ExecutionsList filters={{ status, workflowId }} />
     </>
   );
 }

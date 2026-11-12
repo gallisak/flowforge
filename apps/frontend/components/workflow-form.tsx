@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/api-client';
-import { ApiError } from '@/lib/api-error';
+import { ApiError, failureMessage } from '@/lib/api-error';
 import type { MissedRunPolicy, WorkflowDto } from '@/lib/types';
 import {
   changesFrom,
@@ -22,6 +22,8 @@ import {
   valuesFrom,
   WorkflowFormValues,
 } from '@/lib/workflow-form';
+
+const EDIT_CONFLICT = 'The workflow was changed by someone else; reload it and try again';
 
 const POLICY_LABELS: Record<MissedRunPolicy, string> = {
   skip: 'Skip runs missed during downtime',
@@ -43,6 +45,7 @@ export function WorkflowForm({ workflow, timezones }: { workflow?: WorkflowDto; 
   const [values, setValues] = useState<WorkflowFormValues>(() => (workflow ? valuesFrom(workflow) : emptyValues()));
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
+  const [conflict, setConflict] = useState(false);
   const zones = useMemo(() => (timezones.includes('UTC') ? timezones : ['UTC', ...timezones]), [timezones]);
 
   const set = <K extends keyof WorkflowFormValues>(key: K, value: WorkflowFormValues[K]) => {
@@ -56,19 +59,25 @@ export function WorkflowForm({ workflow, timezones }: { workflow?: WorkflowDto; 
     e.preventDefault();
     const { errors: found, payload } = validateWorkflow(values, workflow);
     setErrors(found);
+    setConflict(false);
     if (!payload) return;
     setSubmitting(true);
     try {
       if (workflow) {
         const changes = changesFrom(payload, workflow);
-        if (Object.keys(changes).length > 0) await apiRequest(`/workflows/${workflow.id}`, { method: 'PATCH', body: changes });
+        if (Object.keys(changes).length > 0) {
+          await apiRequest(`/workflows/${workflow.id}`, { method: 'PATCH', body: changes, headers: { 'if-match': `"${workflow.version}"` } });
+        }
       } else {
         await apiRequest('/workflows', { method: 'POST', body: payload });
       }
       router.push('/workflows');
       router.refresh();
     } catch (err) {
-      setErrors(err instanceof ApiError && err.status === 400 ? serverErrors(err.messages) : { form: (err as Error).message });
+      const edited = err instanceof ApiError && err.status === 412;
+      setConflict(edited);
+      if (edited) setErrors({ form: EDIT_CONFLICT });
+      else setErrors(err instanceof ApiError && err.status === 400 ? serverErrors(err.messages) : { form: failureMessage(err) });
       setSubmitting(false);
     }
   }
@@ -85,7 +94,14 @@ export function WorkflowForm({ workflow, timezones }: { workflow?: WorkflowDto; 
         <CardContent className="space-y-6">
           {errors.form && (
             <Alert variant="destructive">
-              <AlertDescription>{errors.form}</AlertDescription>
+              <AlertDescription className="flex flex-wrap items-center gap-3">
+                <span>{errors.form}</span>
+                {conflict && (
+                  <Button type="button" size="sm" variant="outline" onClick={() => router.refresh()}>
+                    Reload the workflow
+                  </Button>
+                )}
+              </AlertDescription>
             </Alert>
           )}
           <div className="grid gap-6 md:grid-cols-2">

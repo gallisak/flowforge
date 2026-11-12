@@ -1,10 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
+import { parseExpression } from 'cron-parser';
 import { ZonedCronIterator } from '../scheduler/zoned-cron';
 
-export const MIN_SCHEDULE_INTERVAL_MS = 60_000;
 const MAX_CRON_LENGTH = 100;
-const SAMPLED_OCCURRENCES = 10;
-const VALIDATION_BUDGET_MS = 20;
+const SAMPLED_OCCURRENCES = 3;
 
 export function isValidTimezone(timezone: string): boolean {
   try {
@@ -28,21 +27,15 @@ export function validateSchedule(cron: string | null, timezone: string, now = ne
     throw new BadRequestException('cron must have 5 fields, or 6 with seconds');
   }
 
-  const occurrences: number[] = [];
-  const started = performance.now();
+  let secondsPerMinute: number;
   try {
+    secondsPerMinute = parseExpression(cron, { tz: 'UTC' }).fields.second.length;
     const iterator = new ZonedCronIterator(cron, timezone, now);
-    while (occurrences.length < SAMPLED_OCCURRENCES) {
-      occurrences.push(iterator.next().getTime());
-      if (occurrences.length >= 2 && performance.now() - started > VALIDATION_BUDGET_MS) break;
-    }
+    for (let sampled = 0; sampled < SAMPLED_OCCURRENCES; sampled++) iterator.next();
   } catch {
     throw new BadRequestException('cron must be a valid cron expression');
   }
-
-  for (let i = 1; i < occurrences.length; i++) {
-    if (occurrences[i] - occurrences[i - 1] < MIN_SCHEDULE_INTERVAL_MS) {
-      throw new BadRequestException('cron must not fire more often than once per minute');
-    }
+  if (secondsPerMinute > 1) {
+    throw new BadRequestException('cron must not fire more often than once per minute');
   }
 }

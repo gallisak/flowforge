@@ -16,6 +16,7 @@ describe('step checkpoints', () => {
     base: process.env.RETRY_BASE_MS,
     cap: process.env.RETRY_CAP_MS,
     lease: process.env.WORKER_LEASE_SECONDS,
+    statement: process.env.DB_STATEMENT_TIMEOUT_MS,
   };
 
   async function enqueue(steps: Parameters<typeof seedWorkflow>[2]): Promise<{ execution: Execution; job: Job }> {
@@ -30,6 +31,7 @@ describe('step checkpoints', () => {
     process.env.RETRY_BASE_MS = '50';
     process.env.RETRY_CAP_MS = '100';
     process.env.WORKER_LEASE_SECONDS = '2';
+    process.env.DB_STATEMENT_TIMEOUT_MS = '1500';
     receiver = await startReceiver((req, res) => {
       if (req.path === '/slow') {
         setTimeout(() => res.writeHead(200).end('{}'), 4_000);
@@ -52,6 +54,7 @@ describe('step checkpoints', () => {
       ['RETRY_BASE_MS', saved.base],
       ['RETRY_CAP_MS', saved.cap],
       ['WORKER_LEASE_SECONDS', saved.lease],
+      ['DB_STATEMENT_TIMEOUT_MS', saved.statement],
     ] as const) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;

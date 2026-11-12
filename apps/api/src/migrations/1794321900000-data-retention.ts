@@ -2,22 +2,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 const PURGE_SIGNATURE = 'purge_finished_data(interval, integer)';
 
-export class DataRetention1794321900000 implements MigrationInterface {
-  name = 'DataRetention1794321900000';
-
-  public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `CREATE INDEX "IDX_executions_finished" ON "executions" ("finishedAt") WHERE "status" IN ('succeeded', 'failed')`,
-    );
-    await queryRunner.query(
-      `CREATE INDEX "IDX_executions_unfinished_version" ON "executions" ("workflowId", "workflowVersion") WHERE "status" NOT IN ('succeeded', 'failed')`,
-    );
-    await queryRunner.query(`CREATE INDEX "IDX_jobs_execution" ON "jobs" ("executionId")`);
-    await queryRunner.query(
-      `CREATE INDEX "IDX_outbox_events_finished" ON "outbox_events" ("createdAt") WHERE "status" IN ('delivered', 'dead')`,
-    );
-    await queryRunner.query(`CREATE INDEX "IDX_outbox_events_tenant_status_created" ON "outbox_events" ("tenantId", "status", "createdAt")`);
-    await queryRunner.query(`
+export const RETENTION_PURGE = `
       CREATE FUNCTION purge_finished_data(p_retention interval, p_batch integer)
         RETURNS TABLE ("executions" integer, "outboxEvents" integer, "workflowVersions" integer)
         LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
@@ -75,7 +60,24 @@ export class DataRetention1794321900000 implements MigrationInterface {
           RETURN NEXT;
         END
         $$
-    `);
+    `;
+
+export class DataRetention1794321900000 implements MigrationInterface {
+  name = 'DataRetention1794321900000';
+
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(
+      `CREATE INDEX "IDX_executions_finished" ON "executions" ("finishedAt") WHERE "status" IN ('succeeded', 'failed')`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "IDX_executions_unfinished_version" ON "executions" ("workflowId", "workflowVersion") WHERE "status" NOT IN ('succeeded', 'failed')`,
+    );
+    await queryRunner.query(`CREATE INDEX "IDX_jobs_execution" ON "jobs" ("executionId")`);
+    await queryRunner.query(
+      `CREATE INDEX "IDX_outbox_events_finished" ON "outbox_events" ("createdAt") WHERE "status" IN ('delivered', 'dead')`,
+    );
+    await queryRunner.query(`CREATE INDEX "IDX_outbox_events_tenant_status_created" ON "outbox_events" ("tenantId", "status", "createdAt")`);
+    await queryRunner.query(RETENTION_PURGE);
     await queryRunner.query(`REVOKE ALL ON FUNCTION ${PURGE_SIGNATURE} FROM PUBLIC`);
     await queryRunner.query(`GRANT EXECUTE ON FUNCTION ${PURGE_SIGNATURE} TO flowforge_app`);
   }

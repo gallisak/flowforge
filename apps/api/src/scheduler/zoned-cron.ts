@@ -50,10 +50,13 @@ export function utcOffsetMs(timezone: string, instantMs: number): number {
   return wallMs - Math.floor(instantMs / 1000) * 1000;
 }
 
+const HOURS_PER_DAY = 24;
+
 export function followsWallClockByHour(cron: string): boolean {
-  const fields = cron.trim().split(/\s+/);
-  const hour = fields.length === 6 ? fields[2] : fields[1];
-  return hour.startsWith('*');
+  const hours = [...parseExpression(cron, { tz: 'UTC' }).fields.hour].sort((a, b) => a - b);
+  if (hours.length < 2 || hours[0] !== 0) return false;
+  const step = hours[1];
+  return hours.every((hour, i) => hour === i * step) && hours[hours.length - 1] + step >= HOURS_PER_DAY;
 }
 
 interface WallTime {

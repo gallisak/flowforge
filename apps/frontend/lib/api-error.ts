@@ -1,3 +1,6 @@
+export const NETWORK_FAILURE = 'Could not reach the server. Check your connection and try again.';
+export const UNEXPECTED_RESPONSE = 'The server sent an unexpected response';
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -18,4 +21,18 @@ export async function errorFrom(res: Response): Promise<ApiError> {
   }
   if (messages.length === 0) messages = [res.status === 401 ? 'Connect with a valid API key first' : `Request failed with status ${res.status}`];
   return new ApiError(res.status, messages);
+}
+
+function isAbort(error: unknown): boolean {
+  return (error as Error | null)?.name === 'AbortError';
+}
+
+export function networkFailure(error: unknown): unknown {
+  return isAbort(error) ? error : new ApiError(0, [NETWORK_FAILURE]);
+}
+
+export function failureMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  if (error instanceof TypeError) return NETWORK_FAILURE;
+  return UNEXPECTED_RESPONSE;
 }

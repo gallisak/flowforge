@@ -1,10 +1,9 @@
 import { INestApplication } from '@nestjs/common';
-import { randomUUID } from 'crypto';
 import request from 'supertest';
-import { OutboxEvent } from '../../../src/entities';
+import { Execution, OutboxEvent } from '../../../src/entities';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
-import { seedTenant, SeededTenant } from '../../support/db';
+import { seedTenant, SeededTenant, seedWorkflow } from '../../support/db';
 import { eventually } from '../../support/eventually';
 import { Receiver, startReceiver } from '../../support/receiver';
 import { InProcessWorkers, startInProcessWorkers } from '../../support/worker';
@@ -26,16 +25,21 @@ describe('notification delivery across tenants', () => {
     return owner;
   }
 
-  const pending = (tenantId: string, count: number, at: Date) =>
-    ctx.ds.getRepository(OutboxEvent).insert(
-      Array.from({ length: count }, () => ({
+  async function pending(tenantId: string, count: number, at: Date): Promise<void> {
+    const workflow = await seedWorkflow(ctx.ds, tenantId, [{ id: 'note', type: 'log', message: 'x' }]);
+    const executions = await ctx.ds
+      .getRepository(Execution)
+      .save(Array.from({ length: count }, () => ({ tenantId, workflowId: workflow.id, input: {}, status: 'succeeded' as const })));
+    await ctx.ds.getRepository(OutboxEvent).insert(
+      executions.map((execution) => ({
         tenantId,
-        executionId: randomUUID(),
+        executionId: execution.id,
         type: 'execution.succeeded',
         payload: {},
         nextAttemptAt: at,
       })),
     );
+  }
 
   beforeAll(async () => {
     process.env.OUTBOX_TIMEOUT_MS = '1000';

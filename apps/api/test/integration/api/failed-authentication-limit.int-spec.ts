@@ -30,20 +30,25 @@ describe('failed authentication attempts from one address', () => {
     await request(server).get('/workflows').set('x-api-key', target.apiKey).expect(200);
     for (let i = 0; i < 3; i++) await request(server).get('/workflows').set('x-api-key', `ff_wrong_${i}`).expect(401);
     const authenticate = jest.spyOn(app.get(TenantDb), 'authenticate');
-    const resolve = jest.spyOn(app.get(TenantDb), 'resolveWebhookTenant');
 
     const blocked = await request(server).get('/workflows').set('x-api-key', 'ff_wrong_again');
-    const forged = await request(server)
-      .post(`/hooks/${target.workflowId}`)
-      .set('content-type', 'application/json')
-      .set(signWebhook('whsec_Zm9yZ2Vk', '{}'))
-      .send('{}');
     await request(server).get('/workflows').set('x-api-key', target.apiKey).expect(200);
 
     expect(blocked.status).toBe(429);
     expect(blocked.headers['retry-after']).toBeDefined();
+    expect(authenticate).toHaveBeenCalledTimes(1);
+  });
+
+  it('are answered without touching the database once one webhook gets too many forged signatures', async () => {
+    const server = app.getHttpServer();
+    const forge = () =>
+      request(server).post(`/hooks/${target.workflowId}`).set('content-type', 'application/json').set(signWebhook('whsec_Zm9yZ2Vk', '{}')).send('{}');
+    for (let i = 0; i < 3; i++) await forge().expect(401);
+    const resolve = jest.spyOn(app.get(TenantDb), 'resolveWebhookTenant');
+
+    const forged = await forge();
+
     expect(forged.status).toBe(429);
     expect(resolve).not.toHaveBeenCalled();
-    expect(authenticate).toHaveBeenCalledTimes(1);
   });
 });

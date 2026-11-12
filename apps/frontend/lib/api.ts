@@ -1,5 +1,6 @@
-import { cookies } from 'next/headers';
-import { errorFrom } from './api-error';
+import { cookies, headers } from 'next/headers';
+import { ApiError, errorFrom } from './api-error';
+import { clientAddressHeaders } from './client-address';
 
 export const API_URL = process.env.API_URL ?? 'http://localhost:3000';
 export const API_KEY_COOKIE = 'ff_api_key';
@@ -16,9 +17,10 @@ export async function hasApiKey(): Promise<boolean> {
 }
 
 async function apiResponse(path: string): Promise<Response> {
-  const key = (await cookies()).get(API_KEY_COOKIE)?.value ?? '';
+  const key = (await cookies()).get(API_KEY_COOKIE)?.value;
+  if (!key) throw new ApiError(401, ['Connect with a valid API key first']);
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { 'x-api-key': key },
+    headers: { 'x-api-key': key, ...clientAddressHeaders(await headers()) },
     cache: 'no-store',
     signal: AbortSignal.timeout(API_TIMEOUT_MS),
   });

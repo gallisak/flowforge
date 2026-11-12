@@ -19,9 +19,9 @@ describe('cost of schedule validation', () => {
 
   afterAll(() => cronSteps.mockRestore());
 
-  it('stops sampling a sparse cron once its time budget is spent', () => {
-    expect(stepsToValidate(0)).toBe(10);
-    expect(stepsToValidate(25)).toBe(2);
+  it('samples the same few occurrences of a sparse cron however slow the machine is', () => {
+    expect(stepsToValidate(0)).toBe(3);
+    expect(stepsToValidate(25)).toBe(3);
   });
 });
 

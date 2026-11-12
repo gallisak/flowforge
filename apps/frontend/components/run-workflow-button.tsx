@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api-client';
+import { failureMessage } from '@/lib/api-error';
 import type { ExecutionDto } from '@/lib/types';
 
 export function RunWorkflowButton({ workflowId }: { workflowId: string }) {
@@ -19,7 +20,7 @@ export function RunWorkflowButton({ workflowId }: { workflowId: string }) {
       const { data } = await apiRequest<ExecutionDto>(`/workflows/${workflowId}/run`, { method: 'POST', body: {} });
       router.push(`/executions/${data.id}`);
     } catch (e) {
-      setError((e as Error).message);
+      setError(failureMessage(e));
       setBusy(false);
     }
   }

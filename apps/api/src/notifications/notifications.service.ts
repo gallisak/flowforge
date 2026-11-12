@@ -86,7 +86,8 @@ export class NotificationsService {
   }
 
   private async assertDeliverable(url: string): Promise<void> {
-    const parsed = new URL(url);
+    const parsed = URL.parse(url);
+    if (!parsed) throw new BadRequestException('url is invalid');
     if (parsed.username || parsed.password) throw new BadRequestException('url must not contain credentials');
     if (parsed.hash) throw new BadRequestException('url must not contain a fragment');
     const host = parsed.hostname.toLowerCase().replace(/\.$/, '');

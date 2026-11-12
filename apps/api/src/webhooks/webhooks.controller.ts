@@ -18,7 +18,7 @@ import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
-import { AuthFailureLimiter, clientAddressOf } from '../limits/auth-failure-limiter';
+import { AuthFailureLimiter } from '../limits/auth-failure-limiter';
 import { RateLimitService } from '../limits/rate-limit.service';
 import { verifyWebhook } from './signature';
 import { WebhookSecretsService } from './webhook-secrets.service';
@@ -49,10 +49,10 @@ export class WebhooksController {
     if (!req.rawBody?.length || typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw new BadRequestException('Webhook body must be a JSON object');
     }
-    const address = clientAddressOf(req);
-    this.failures.assertAllowed(address);
+    const bucket = `webhook ${workflowId} ${this.failures.clientAddressOf(req)}`;
+    this.failures.assertAllowed(bucket);
     const reject = () => {
-      this.failures.recordFailure(address);
+      this.failures.recordFailure(bucket);
       return new UnauthorizedException('Invalid signature');
     };
     const tenantId = await this.db.resolveWebhookTenant(workflowId);

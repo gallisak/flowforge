@@ -1,20 +1,22 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { timingSafeEqual } from 'crypto';
+import { safeEqual } from '../common/safe-equal';
 import { API_CONFIG, ApiConfig } from '../config/config';
-
-function safeEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ba.length === bb.length && timingSafeEqual(ba, bb);
-}
+import { AuthFailureLimiter, ClientRequest } from '../limits/auth-failure-limiter';
 
 @Injectable()
 export class AdminTokenGuard implements CanActivate {
-  constructor(@Inject(API_CONFIG) private readonly config: ApiConfig) {}
+  constructor(
+    @Inject(API_CONFIG) private readonly config: ApiConfig,
+    private readonly failures: AuthFailureLimiter,
+  ) {}
 
   canActivate(ctx: ExecutionContext): boolean {
-    const token = ctx.switchToHttp().getRequest<{ headers: Record<string, unknown> }>().headers['x-admin-token'];
+    const req = ctx.switchToHttp().getRequest<ClientRequest>();
+    const bucket = `admin ${this.failures.clientAddressOf(req)}`;
+    this.failures.assertAllowed(bucket);
+    const token = req.headers['x-admin-token'];
     if (typeof token !== 'string' || !safeEqual(token, this.config.adminToken)) {
+      this.failures.recordFailure(bucket);
       throw new ForbiddenException();
     }
     return true;

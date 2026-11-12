@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, Min, MaxLength } from 'class-validator';
 import { Response } from 'express';
@@ -7,7 +7,9 @@ import { CurrentTenant } from '../auth/current-tenant.decorator';
 import { AuthenticatedTenant } from '../db/tenant-db.service';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
 import { NEXT_CURSOR_HEADER } from '../executions/executions.controller';
+import { Workflow } from '../entities';
 import { WorkflowsService } from './workflows.service';
+import { entityTagOf } from './workflow-precondition';
 
 export class ListWorkflowsQuery {
   @IsOptional()
@@ -21,6 +23,12 @@ export class ListWorkflowsQuery {
   @IsString()
   @MaxLength(512)
   cursor?: string;
+}
+
+function tagged(res: Response, workflow: Workflow): Workflow {
+  res.setHeader('etag', entityTagOf(workflow.version));
+  res.setHeader('access-control-expose-headers', 'ETag');
+  return workflow;
 }
 
 @Controller('workflows')
@@ -37,8 +45,8 @@ export class WorkflowsController {
   }
 
   @Get(':id')
-  get(@CurrentTenant() t: AuthenticatedTenant, @Param('id', ParseUUIDPipe) id: string) {
-    return this.workflows.get(t.id, id);
+  async get(@CurrentTenant() t: AuthenticatedTenant, @Param('id', ParseUUIDPipe) id: string, @Res({ passthrough: true }) res: Response) {
+    return tagged(res, await this.workflows.get(t.id, id));
   }
 
   @Post()
@@ -47,8 +55,14 @@ export class WorkflowsController {
   }
 
   @Patch(':id')
-  update(@CurrentTenant() t: AuthenticatedTenant, @Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateWorkflowDto) {
-    return this.workflows.update(t.id, id, body);
+  async update(
+    @CurrentTenant() t: AuthenticatedTenant,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdateWorkflowDto,
+    @Headers('if-match') ifMatch: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return tagged(res, await this.workflows.update(t.id, id, body, ifMatch));
   }
 
   @Delete(':id')

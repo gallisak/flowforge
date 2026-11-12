@@ -66,6 +66,23 @@ describe('API proxy route', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['an encoded dot segment with an encoded slash', '/api/proxy/workflows/%2e%2e%2ftenants'],
+    ['encoded slashes that climb out', '/api/proxy/workflows/x%2f..%2f..%2fadmin'],
+    ['a double encoded dot segment', '/api/proxy/workflows/%252e%252e%252ftenants'],
+    ['an encoded query', '/api/proxy/workflows/%3fadmin%3d1'],
+    ['an encoded fragment', '/api/proxy/workflows/x%23y'],
+  ])('refuses %s in the path as Next.js decodes it', async (_case, url) => {
+    const req = make(url);
+    const segments = req.nextUrl.pathname.replace(/^\/api\/proxy\//, '').split('/').map(decodeURIComponent);
+
+    const res = await GET(req, { params: Promise.resolve({ path: segments }) });
+
+    expect(segments.some((segment) => segment.includes('/') || segment.includes('%') || segment.includes('?') || segment.includes('#'))).toBe(true);
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('answers 502 when the API cannot be reached', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
 

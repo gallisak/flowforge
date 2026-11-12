@@ -119,6 +119,19 @@ describe('TransformSandbox', () => {
     expect(await running).toBeInstanceOf(TransformError);
   });
 
+  it.each(['(async () => 1)()', 'Promise.resolve({ ok: true })', '({ then(resolve) { resolve(1); } })', 'Object.assign(() => 1, { then() {} })'])(
+    'refuses a promise or thenable result: %s',
+    async (expr) => {
+      const error = await failureOf(expr);
+      expect(error.message).toBe('transform must return a value, not a promise');
+      expect(error.retryable).toBe(false);
+    },
+  );
+
+  it('keeps an object whose then field is not a function', async () => {
+    await expect(sandbox.evaluate('({ then: 1 })', {})).resolves.toEqual({ then: 1 });
+  });
+
   it('rejects an oversized result inside the sandbox', async () => {
     expect((await failureOf("'x'.repeat(2 * 1024 * 1024)")).message).toBe('step output exceeds 1048576 bytes');
     expect((await failureOf("'\u00e9'.repeat(600 * 1024)")).message).toBe('step output exceeds 1048576 bytes');

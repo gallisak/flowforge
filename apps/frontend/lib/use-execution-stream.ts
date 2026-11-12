@@ -16,26 +16,45 @@ export function isTerminal(status: string): boolean {
 interface StreamFailure {
   permanent: boolean;
   message: string;
+  unauthenticated?: boolean;
+  execution?: ExecutionDetailDto;
+}
+
+function looksLikeExecution(value: unknown): value is ExecutionDetailDto {
+  const candidate = value as Partial<ExecutionDetailDto> | null;
+  return typeof candidate === 'object' && candidate !== null && typeof candidate.status === 'string' && Array.isArray(candidate.steps);
 }
 
 async function describeFailure(id: string, signal: AbortSignal): Promise<StreamFailure> {
   try {
     const res = await fetch(`/api/proxy/executions/${id}`, { signal, cache: 'no-store' });
     if (res.status === 404) return { permanent: true, message: 'Execution not found' };
-    if (res.status === 401) return { permanent: true, message: 'Your API key is missing or no longer valid' };
+    if (res.status === 401) return { permanent: true, unauthenticated: true, message: 'Your API key is missing or no longer valid' };
     if (res.status === 400) return { permanent: true, message: 'This is not a valid execution id' };
     if (res.status === 403) return { permanent: true, message: 'This request is not allowed' };
-    if (res.ok) return { permanent: false, message: 'The live connection was refused' };
+    if (res.ok) {
+      const execution: unknown = await res.json().catch(() => null);
+      if (!looksLikeExecution(execution)) return { permanent: false, message: 'The server sent an unexpected response' };
+      return { permanent: false, message: 'The live connection was refused', execution };
+    }
     return { permanent: false, message: `Could not load the execution (HTTP ${res.status})` };
   } catch {
     return { permanent: false, message: 'Could not reach the server' };
   }
 }
 
-export function useExecutionStream(id: string): { execution: ExecutionDetailDto | null; state: StreamState; error: string | null } {
+export interface ExecutionStream {
+  execution: ExecutionDetailDto | null;
+  state: StreamState;
+  error: string | null;
+  unauthenticated: boolean;
+}
+
+export function useExecutionStream(id: string): ExecutionStream {
   const [execution, setExecution] = useState<ExecutionDetailDto | null>(null);
   const [state, setState] = useState<StreamState>('connecting');
   const [error, setError] = useState<string | null>(null);
+  const [unauthenticated, setUnauthenticated] = useState(false);
 
   useEffect(() => {
     const stopped = new AbortController();
@@ -80,7 +99,16 @@ export function useExecutionStream(id: string): { execution: ExecutionDetailDto 
         current.close();
         void describeFailure(id, stopped.signal).then((failure) => {
           if (stopped.signal.aborted) return;
+          if (failure.execution) {
+            setExecution(failure.execution);
+            if (isTerminal(failure.execution.status)) {
+              setError(null);
+              setState('closed');
+              return;
+            }
+          }
           setError(failure.message);
+          setUnauthenticated(Boolean(failure.unauthenticated));
           if (failure.permanent) {
             setState('error');
             return;
@@ -93,6 +121,7 @@ export function useExecutionStream(id: string): { execution: ExecutionDetailDto 
 
     setExecution(null);
     setError(null);
+    setUnauthenticated(false);
     setState('connecting');
     connect();
 
@@ -103,5 +132,5 @@ export function useExecutionStream(id: string): { execution: ExecutionDetailDto 
     };
   }, [id]);
 
-  return { execution, state, error };
+  return { execution, state, error, unauthenticated };
 }

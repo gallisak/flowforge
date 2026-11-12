@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, unreachable } from '@/lib/api';
+import { clientAddressHeaders } from '@/lib/client-address';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   let upstream: Response;
   try {
     upstream = await fetch(`${API_URL}/executions/${id}/events`, {
-      headers: { 'x-api-key': key, accept: 'text/event-stream' },
+      headers: { 'x-api-key': key, accept: 'text/event-stream', ...clientAddressHeaders(req.headers) },
       signal: upstreamAbort.signal,
       cache: 'no-store',
     });

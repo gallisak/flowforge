@@ -6,7 +6,14 @@ export function containsNul(text: string): boolean {
 }
 
 export function storableText(text: string): string {
-  return text.replaceAll(NUL, REPLACEMENT);
+  return text.replaceAll(NUL, REPLACEMENT).toWellFormed();
+}
+
+export function truncatedText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  const lastKept = text.charCodeAt(maxLength - 1);
+  const splitsPair = lastKept >= 0xd800 && lastKept <= 0xdbff;
+  return text.slice(0, splitsPair ? maxLength - 1 : maxLength);
 }
 
 export function toStorable(value: unknown): unknown {
@@ -18,9 +25,16 @@ export function toStorable(value: unknown): unknown {
   return value;
 }
 
-export function rejectNulReviver(key: string, value: unknown): unknown {
-  if (containsNul(key) || (typeof value === 'string' && containsNul(value))) {
-    throw new SyntaxError('JSON strings must not contain the NUL character');
+function isStorableText(text: string): boolean {
+  return !containsNul(text) && text.isWellFormed();
+}
+
+export function rejectUnstorableJson(key: string, value: unknown): unknown {
+  if (!isStorableText(key) || (typeof value === 'string' && !isStorableText(value))) {
+    throw new SyntaxError('JSON strings must not contain the NUL character or unpaired UTF-16 surrogates');
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new SyntaxError('JSON numbers must fit in a double-precision number');
   }
   return value;
 }
