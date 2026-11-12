@@ -15,6 +15,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const INTERNAL_WORKER_ERROR = 'the worker hit an internal error; the attempt will be retried';
 const RECORD_FAILURE_ATTEMPTS = 3;
 const RECORD_FAILURE_RETRY_MS = 500;
+const LEASE_DEADLINE_MARGIN_MS = 1_000;
 
 export class WorkerShutdownError extends Error {
   constructor() {
@@ -71,7 +72,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
   private scheduleReaper(): void {
     this.reaperTimer = setTimeout(async () => {
       try {
-        const reaped = await this.queue.reapExpired();
+        const reaped = await this.queue.reapExpired({ baseMs: this.config.retryBaseMs, capMs: this.config.retryCapMs });
         for (const job of reaped) {
           if (job.status === 'dead') {
             metrics.jobsDead.inc({ reason: 'lease_expired' });
@@ -91,6 +92,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
   private async loop(): Promise<void> {
     while (this.running) {
       try {
+        const claimStartedAt = Date.now();
         const job = await this.queue.claimNext(this.workerId, this.config.leaseSeconds, this.config.tenantMaxConcurrentJobs);
         if (!job) {
           await sleep(250);
@@ -101,7 +103,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
           await this.queue.release(job, this.workerId);
           return;
         }
-        await this.processWithLease(job);
+        await this.processWithLease(job, claimStartedAt);
       } catch (err) {
         this.logger.error(`loop error: ${(err as Error).message}`);
         await sleep(1000);
@@ -109,30 +111,38 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     }
   }
 
-  private async processWithLease(job: Job): Promise<void> {
+  private async processWithLease(job: Job, claimStartedAt: number): Promise<void> {
     const lease = new AbortController();
     this.inFlight.set(job.id, lease);
     const leaseMs = this.config.leaseSeconds * 1000;
-    let renewedAt = Date.now();
+    const marginMs = Math.min(LEASE_DEADLINE_MARGIN_MS, leaseMs / 10);
+    const timers: { heartbeat?: NodeJS.Timeout; deadline?: NodeJS.Timeout } = {};
     const loseLease = () => {
       if (!lease.signal.aborted) lease.abort(new LeaseLostError(job.id));
     };
-    const heartbeat = setInterval(() => {
-      this.queue.extendLease(job, this.workerId, this.config.leaseSeconds).then(
-        (kept) => {
-          if (kept) renewedAt = Date.now();
+    const leaseRenewedAt = (renewalSentAt: number) => {
+      clearTimeout(timers.deadline);
+      timers.deadline = setTimeout(loseLease, Math.max(0, renewalSentAt + leaseMs - marginMs - Date.now()));
+    };
+    const beat = () => {
+      timers.heartbeat = setTimeout(async () => {
+        const sentAt = Date.now();
+        try {
+          if (await this.queue.extendLease(job, this.workerId, this.config.leaseSeconds)) leaseRenewedAt(sentAt);
           else loseLease();
-        },
-        (err: Error) => {
-          this.logger.warn(`could not renew lease on job ${job.id}: ${err.message}`);
-          if (Date.now() - renewedAt >= leaseMs) loseLease();
-        },
-      );
-    }, leaseMs / 3);
+        } catch (err) {
+          this.logger.warn(`could not renew lease on job ${job.id}: ${(err as Error).message}`);
+        }
+        if (!lease.signal.aborted && this.inFlight.get(job.id) === lease) beat();
+      }, leaseMs / 3);
+    };
+    leaseRenewedAt(claimStartedAt);
+    beat();
     try {
       await this.process(job, lease.signal);
     } finally {
-      clearInterval(heartbeat);
+      clearTimeout(timers.heartbeat);
+      clearTimeout(timers.deadline);
       this.inFlight.delete(job.id);
     }
   }
@@ -160,6 +170,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
       const checkpoints = await inTenant((em) => em.find(StepRun, { where: { executionId: execution.id } }));
       const succeeded = new Map(checkpoints.filter((r) => r.status === 'succeeded').map((r) => [r.stepIndex, r]));
       const waiting = new Set(checkpoints.filter((r) => r.status === 'waiting').map((r) => r.stepIndex));
+      let storedBytes = await inTenant((em) => this.storedOutputBytes(em, execution.id));
 
       await this.queue.markRunning(job, this.workerId);
       const ctx: StepContext = { input: execution.input, steps: {} };
@@ -185,9 +196,9 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         context.stepId = step.id;
         const stepRunId = await this.queue.startStep(job, this.workerId, i, step.id, idempotencyKey);
         const stepStarted = performance.now();
-        let output: unknown;
+        let result: { output: unknown; bytes: number };
         try {
-          output = await this.executor.execute(step, ctx, {
+          result = await this.executor.execute(step, ctx, {
             signal,
             idempotencyKey: idempotencyKey ?? undefined,
             correlationId: context.correlationId,
@@ -197,15 +208,18 @@ export class JobRunnerService implements BeforeApplicationShutdown {
           throw err;
         }
         metrics.stepDuration.observe({ type: step.type, outcome: 'succeeded' }, (performance.now() - stepStarted) / 1000);
-        await this.queue.finishStep(job, this.workerId, stepRunId, output);
-        ctx.steps[step.id] = output;
+        if (storedBytes + result.bytes > this.config.executionOutputMaxBytes) {
+          throw new StepError(`the outputs of this execution would exceed ${this.config.executionOutputMaxBytes} bytes in total`, false);
+        }
+        storedBytes += result.bytes;
+        ctx.steps[step.id] = await this.queue.finishStep(job, this.workerId, stepRunId, result.output);
         context.stepId = undefined;
       }
       const last = steps[steps.length - 1];
       const completed = await this.queue.complete(job, this.workerId, {
         status: 'succeeded',
         output: ctx.steps[last.id] as object,
-        finishedAt: new Date(),
+        finishedAt: () => 'now()',
       });
       if (!completed) {
         this.logger.warn(`job ${job.id} finished after its lease was lost; result discarded`);
@@ -232,6 +246,14 @@ export class JobRunnerService implements BeforeApplicationShutdown {
       if (outcome === 'failed' || outcome === 'dead') metrics.jobsFinished.inc({ outcome: 'failed' });
       if (outcome !== 'lost') this.logger.warn(`execution attempt failed (${outcome}): ${message}`);
     }
+  }
+
+  private async storedOutputBytes(em: EntityManager, executionId: string): Promise<number> {
+    const [{ bytes }]: Array<{ bytes: string }> = await em.query(
+      `SELECT coalesce(sum("outputBytes"), 0) AS bytes FROM step_runs WHERE "executionId" = $1 AND "status" = 'succeeded'`,
+      [executionId],
+    );
+    return Number(bytes);
   }
 
   private async recordFailure(job: Job, message: string, retryable: boolean): Promise<FailOutcome> {

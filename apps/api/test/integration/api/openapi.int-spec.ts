@@ -2,7 +2,16 @@ import { INestApplication } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import request from 'supertest';
+import { getMetadataStorage } from 'class-validator';
+import { EXECUTION_STATUSES, OUTBOX_EVENT_STATUSES } from '../../../src/entities';
+import { ListExecutionsQuery } from '../../../src/executions/executions.controller';
+import { NotificationEndpointDto } from '../../../src/notifications/notification-endpoint.dto';
+import { ListNotificationEventsQuery } from '../../../src/notifications/notifications.controller';
 import { notificationBody } from '../../../src/outbox/outbox-dispatcher.service';
+import { MISSED_RUN_POLICIES } from '../../../src/scheduler/cron-schedule';
+import { CreateTenantDto, UpdateTenantLimitsDto } from '../../../src/tenants/tenants.controller';
+import { CreateWorkflowDto, UpdateWorkflowDto } from '../../../src/workflows/workflow.dto';
+import { ListWorkflowsQuery } from '../../../src/workflows/workflows.controller';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
 import { eventually } from '../../support/eventually';
@@ -10,15 +19,25 @@ import { InProcessWorkers, startInProcessWorkers } from '../../support/worker';
 
 interface Schema {
   $ref?: string;
+  enum?: string[];
   allOf?: Schema[];
   properties?: Record<string, Schema>;
   required?: string[];
   items?: Schema;
 }
 
+interface Operation {
+  parameters?: Array<{ $ref?: string; name?: string; in?: string; schema?: Schema }>;
+  responses: Record<string, unknown>;
+}
+
 interface PathItem {
   servers?: unknown[];
   [method: string]: unknown;
+}
+
+function propertiesOf(dto: abstract new () => unknown): string[] {
+  return [...new Set(getMetadataStorage().getTargetValidationMetadatas(dto as new () => unknown, '', true, false).map((m) => m.propertyName))].sort();
 }
 
 interface OpenApiDocument {
@@ -58,7 +77,7 @@ function flatten(document: OpenApiDocument, schema: Schema): { properties: strin
 }
 
 function routesOf(app: INestApplication): string[] {
-  const router = (app.getHttpAdapter().getInstance() as { _router: { stack: Array<{ route?: { path: string; methods: Record<string, boolean> } }> } })._router;
+  const { router } = app.getHttpAdapter().getInstance() as { router: { stack: Array<{ route?: { path: string; methods: Record<string, boolean> } }> } };
   return router.stack
     .flatMap((layer) => (layer.route ? Object.keys(layer.route.methods).map((method) => `${method.toUpperCase()} ${layer.route?.path}`) : []))
     .sort();
@@ -176,5 +195,59 @@ describe('OpenAPI document', () => {
     expectDocumented('ExecutionNotification', body.data);
     const listed = await request(server).get('/notifications/events').set('x-api-key', key).expect(200);
     expectDocumented('NotificationEvent', listed.body[0]);
+  });
+
+  it('documents the request bodies, query parameters and enums the API validates', () => {
+    const bodies: Array<[string, abstract new () => unknown]> = [
+      ['CreateWorkflow', CreateWorkflowDto],
+      ['UpdateWorkflow', UpdateWorkflowDto],
+      ['CreateTenant', CreateTenantDto],
+      ['TenantLimits', UpdateTenantLimitsDto],
+      ['NotificationEndpointRequest', NotificationEndpointDto],
+    ];
+    for (const [schema, dto] of bodies) {
+      expect({ schema, properties: flatten(document, document.components.schemas[schema]).properties }).toEqual({ schema, properties: propertiesOf(dto) });
+    }
+    const queries: Array<[string, abstract new () => unknown]> = [
+      ['/executions', ListExecutionsQuery],
+      ['/workflows', ListWorkflowsQuery],
+      ['/notifications/events', ListNotificationEventsQuery],
+    ];
+    for (const [path, dto] of queries) {
+      const parameters = ((document.paths[path].get as Operation).parameters ?? []).filter((p) => p.in === 'query').map((p) => p.name);
+      expect({ path, parameters: parameters.sort() }).toEqual({ path, parameters: propertiesOf(dto) });
+    }
+    const statusParameter = (document.paths['/notifications/events'].get as Operation).parameters?.find((p) => p.name === 'status');
+    expect(statusParameter?.schema?.enum).toEqual([...OUTBOX_EVENT_STATUSES]);
+    expect(document.components.schemas.ExecutionStatus.enum).toEqual([...EXECUTION_STATUSES]);
+    expect(document.components.schemas.MissedRunPolicy.enum).toEqual([...MISSED_RUN_POLICIES]);
+  });
+
+  it('documents every status code the API answers in common failure cases', async () => {
+    const server = app.getHttpServer();
+    const tenant = await request(server).post('/tenants').set('x-admin-token', process.env.ADMIN_TOKEN as string).send({ name: 'codes' }).expect(201);
+    const key = tenant.body.apiKey as string;
+    const unknown = '00000000-0000-4000-8000-000000000000';
+    const probes: Array<[string, string, () => request.Test]> = [
+      ['post', '/workflows', () => request(server).post('/workflows').set('x-api-key', key).send({ name: 'x' })],
+      ['post', '/workflows', () => request(server).post('/workflows').send({})],
+      ['post', '/workflows', () => request(server).post('/workflows').set('x-api-key', key).set('content-type', 'text/plain').send('{}')],
+      ['get', '/executions', () => request(server).get('/executions?limit=0').set('x-api-key', key)],
+      ['get', '/executions/{id}', () => request(server).get(`/executions/${unknown}`).set('x-api-key', key)],
+      ['get', '/executions/{id}/output', () => request(server).get(`/executions/${unknown}/output`).set('x-api-key', key)],
+      ['get', '/executions/{id}/steps/{stepIndex}/output', () => request(server).get(`/executions/${unknown}/steps/x/output`).set('x-api-key', key)],
+      ['post', '/tenants', () => request(server).post('/tenants').set('x-admin-token', 'wrong').send({ name: 'codes' })],
+      ['patch', '/workflows/{id}', () => request(server).patch(`/workflows/${unknown}`).set('x-api-key', key).send({ name: 'x' })],
+      ['post', '/workflows/{id}/run', () => request(server).post(`/workflows/${unknown}/run`).set('x-api-key', key).send({})],
+      ['post', '/hooks/{workflowId}', () => request(server).post(`/hooks/${unknown}`).set('content-type', 'application/json').send('{}')],
+    ];
+    const undocumented: string[] = [];
+    for (const [method, path, send] of probes) {
+      const response = await send();
+      const operation = document.paths[path][method] as Operation;
+      if (!(String(response.status) in operation.responses)) undocumented.push(`${method.toUpperCase()} ${path} ${response.status}`);
+    }
+
+    expect(undocumented).toEqual([]);
   });
 });

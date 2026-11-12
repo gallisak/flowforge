@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { SchedulerModule } from './app.module';
 import { loadConfigOrExit, loadSchedulerConfig } from './config/config';
-import { startOps, useStructuredLogs } from './observability/bootstrap';
+import { runService, startOps, useStructuredLogs } from './observability/bootstrap';
 import { SchedulerService } from './scheduler/scheduler.service';
 
 async function bootstrap() {
@@ -13,4 +13,4 @@ async function bootstrap() {
   await startOps(app, config, () => scheduler.isRunning);
   logger.log(`flowforge-scheduler ticking every ${config.schedulerTickMs} ms`, 'Bootstrap');
 }
-bootstrap();
+runService('scheduler', bootstrap);

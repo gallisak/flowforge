@@ -17,8 +17,9 @@ export const dynamic = 'force-dynamic';
 const PAGE_SIZE = 50;
 const CURSOR = /^[A-Za-z0-9_-]{1,512}$/;
 
-export default async function WorkflowsPage({ searchParams }: { searchParams: { cursor?: string } }) {
-  const cursor = searchParams.cursor && CURSOR.test(searchParams.cursor) ? searchParams.cursor : undefined;
+export default async function WorkflowsPage({ searchParams }: { searchParams: Promise<{ cursor?: string }> }) {
+  const { cursor: requested } = await searchParams;
+  const cursor = requested && CURSOR.test(requested) ? requested : undefined;
   let workflows: WorkflowSummaryDto[] = [];
   let nextCursor: string | null = null;
   let failure: ApiError | null = null;
@@ -77,7 +78,7 @@ export default async function WorkflowsPage({ searchParams }: { searchParams: { 
                   </TableCell>
                   <TableCell>v{w.version}</TableCell>
                   <TableCell className="font-mono text-xs">{w.cron ? `${w.cron} · ${w.timezone}` : '—'}</TableCell>
-                  <TableCell className="text-sm">{formatDateTime(w.nextRunAt)}</TableCell>
+                  <TableCell className="text-sm">{formatDateTime(w.nextRunAt, w.timezone)}</TableCell>
                   <TableCell>{w.enabled ? <Badge variant="secondary">Enabled</Badge> : <Badge variant="outline">Disabled</Badge>}</TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-2">

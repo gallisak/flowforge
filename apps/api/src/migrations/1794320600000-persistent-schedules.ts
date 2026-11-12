@@ -1,5 +1,9 @@
+import { parseExpression } from 'cron-parser';
 import { MigrationInterface, QueryRunner } from 'typeorm';
-import { nextOccurrence } from '../scheduler/cron-schedule';
+
+function nextOccurrenceWhenWritten(schedule: { cron: string; timezone: string }, after: Date): Date {
+  return parseExpression(schedule.cron, { currentDate: after, tz: schedule.timezone }).next().toDate();
+}
 
 export class PersistentSchedules1794320600000 implements MigrationInterface {
   name = 'PersistentSchedules1794320600000';
@@ -19,7 +23,7 @@ export class PersistentSchedules1794320600000 implements MigrationInterface {
     for (const workflow of scheduled) {
       let nextRunAt: Date | null = null;
       try {
-        nextRunAt = nextOccurrence(workflow, now);
+        nextRunAt = nextOccurrenceWhenWritten(workflow, now);
       } catch {
         nextRunAt = null;
       }

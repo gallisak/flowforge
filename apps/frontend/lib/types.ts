@@ -7,6 +7,7 @@ export interface StepRunDto {
   status: string;
   attempts?: number;
   output?: unknown;
+  outputTruncated?: boolean;
   error: string | null;
   startedAt?: string | null;
   finishedAt?: string | null;
@@ -30,6 +31,7 @@ export interface ExecutionDto extends ExecutionSummaryDto {
 }
 
 export interface ExecutionDetailDto extends ExecutionDto {
+  outputTruncated?: boolean;
   steps: StepRunDto[];
 }
 

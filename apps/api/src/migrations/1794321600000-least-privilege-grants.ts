@@ -6,8 +6,8 @@ export class LeastPrivilegeGrants1794321600000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`REVOKE ALL ON TABLE "migrations" FROM flowforge_app`);
     await queryRunner.query(`REVOKE ALL ON SEQUENCE "migrations_id_seq" FROM flowforge_app`);
-    await queryRunner.query(`REVOKE UPDATE, DELETE, TRUNCATE ON TABLE "workflow_versions" FROM flowforge_app`);
-    await queryRunner.query(`REVOKE UPDATE, DELETE, TRUNCATE ON TABLE "tenants" FROM flowforge_app`);
+    await queryRunner.query(`REVOKE UPDATE, DELETE ON TABLE "workflow_versions" FROM flowforge_app`);
+    await queryRunner.query(`REVOKE UPDATE, DELETE ON TABLE "tenants" FROM flowforge_app`);
     await queryRunner.query(`
       CREATE FUNCTION set_tenant_limits(p_tenant_id uuid, p_changes jsonb)
         RETURNS TABLE ("id" uuid, "maxConcurrentJobs" integer, "maxQueuedJobs" integer, "rateLimitPerMinute" integer)
@@ -27,8 +27,8 @@ export class LeastPrivilegeGrants1794321600000 implements MigrationInterface {
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP FUNCTION set_tenant_limits(uuid, jsonb)`);
-    await queryRunner.query(`GRANT UPDATE, DELETE, TRUNCATE ON TABLE "tenants" TO flowforge_app`);
-    await queryRunner.query(`GRANT UPDATE, DELETE, TRUNCATE ON TABLE "workflow_versions" TO flowforge_app`);
+    await queryRunner.query(`GRANT UPDATE, DELETE ON TABLE "tenants" TO flowforge_app`);
+    await queryRunner.query(`GRANT UPDATE, DELETE ON TABLE "workflow_versions" TO flowforge_app`);
     await queryRunner.query(`GRANT USAGE, SELECT ON SEQUENCE "migrations_id_seq" TO flowforge_app`);
     await queryRunner.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "migrations" TO flowforge_app`);
   }

@@ -24,3 +24,11 @@ export async function startOps(
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => ops.markShuttingDown());
   return ops;
 }
+
+export function runService(service: string, bootstrap: () => Promise<void>): void {
+  bootstrap().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${JSON.stringify({ level: 'fatal', time: new Date().toISOString(), service, msg: 'startup failed', error: message })}\n`);
+    process.exit(1);
+  });
+}

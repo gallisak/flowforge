@@ -18,6 +18,7 @@ import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
+import { AuthFailureLimiter, clientAddressOf } from '../limits/auth-failure-limiter';
 import { RateLimitService } from '../limits/rate-limit.service';
 import { verifyWebhook } from './signature';
 import { WebhookSecretsService } from './webhook-secrets.service';
@@ -29,6 +30,7 @@ export class WebhooksController {
     private readonly executions: ExecutionsService,
     private readonly secrets: WebhookSecretsService,
     private readonly rateLimit: RateLimitService,
+    private readonly failures: AuthFailureLimiter,
     @Inject(API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
@@ -47,14 +49,19 @@ export class WebhooksController {
     if (!req.rawBody?.length || typeof body !== 'object' || body === null || Array.isArray(body)) {
       throw new BadRequestException('Webhook body must be a JSON object');
     }
-    const rejected = new UnauthorizedException('Invalid signature');
+    const address = clientAddressOf(req);
+    this.failures.assertAllowed(address);
+    const reject = () => {
+      this.failures.recordFailure(address);
+      return new UnauthorizedException('Invalid signature');
+    };
     const tenantId = await this.db.resolveWebhookTenant(workflowId);
-    if (!tenantId) throw rejected;
+    if (!tenantId) throw reject();
     const { workflow, secrets } = await this.db.run(tenantId, async (em) => ({
       workflow: await em.findOne(Workflow, { where: { id: workflowId } }),
       secrets: await this.secrets.activeSecrets(em, tenantId),
     }));
-    if (!workflow || !workflow.enabled) throw rejected;
+    if (!workflow || !workflow.enabled) throw reject();
 
     const nowSeconds = Math.floor(Date.now() / 1000);
     const messageId = verifyWebhook(
@@ -64,7 +71,7 @@ export class WebhooksController {
       nowSeconds,
       this.config.webhookToleranceSeconds,
     );
-    if (!messageId) throw rejected;
+    if (!messageId) throw reject();
     await this.rateLimit.consume(tenantId, res);
 
     const execution = await this.executions.enqueue(

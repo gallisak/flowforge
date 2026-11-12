@@ -3,7 +3,7 @@ import { EXPIRE_JOBS, REAPER_RESULT } from './1794320800000-execution-notificati
 
 const LEASE_EXPIRED = 'lease expired: the worker stopped renewing its lease';
 
-const EXPIRE_JOBS_AND_RELEASE_STATES = `
+export const EXPIRE_JOBS_AND_RELEASE_STATES = `
   WITH expired AS (
     SELECT q."id"
       FROM "jobs" q
@@ -47,7 +47,7 @@ const EXPIRE_JOBS_AND_RELEASE_STATES = `
   SELECT * FROM reaped
 `;
 
-function reaperFunction(expireJobs: string): string {
+export function reaperFunction(expireJobs: string): string {
   return `
     CREATE OR REPLACE FUNCTION reap_expired_jobs()
       RETURNS TABLE ${REAPER_RESULT}

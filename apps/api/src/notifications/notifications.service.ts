@@ -57,6 +57,7 @@ export class NotificationsService {
   async set(tenantId: string, url: string): Promise<NotificationEndpointView & { secret?: string }> {
     await this.assertDeliverable(url);
     return this.db.run(tenantId, async (em) => {
+      await this.secrets.lock(em, tenantId, 'outbound');
       await em.upsert(NotificationEndpoint, { tenantId, url }, ['tenantId']);
       const endpoint = await em.findOneOrFail(NotificationEndpoint, { where: { tenantId } });
       const active = await this.secrets.activeSecrets(em, tenantId, 'outbound');

@@ -89,7 +89,8 @@ export function renderLogMessage(template: string, ctx: StepContext, maxLength: 
 
 export type BodyFormat = 'json' | 'form' | 'text';
 
-const JSON_MEDIA_TYPE = /^application\/([a-z0-9.!#$&^_-]+\+)?json\s*(;|$)/;
+const JSON_MEDIA_TYPE = /^(application|text)\/([a-z0-9.!#$&^_-]+\+)?(x-)?json\s*(;|$)/;
+const LOOKS_LIKE_JSON = /^\s*[[{]/;
 const FORM_MEDIA_TYPE = /^application\/x-www-form-urlencoded\s*(;|$)/;
 
 export function bodyFormatOf(template: string, headers: Record<string, string> = {}): BodyFormat {
@@ -97,10 +98,9 @@ export function bodyFormatOf(template: string, headers: Record<string, string> =
     .find(([name]) => name.toLowerCase() === 'content-type')?.[1]
     ?.trim()
     .toLowerCase();
-  if (contentType === undefined) return /^\s*[[{]/.test(template) ? 'json' : 'text';
-  if (JSON_MEDIA_TYPE.test(contentType)) return 'json';
-  if (FORM_MEDIA_TYPE.test(contentType)) return 'form';
-  return 'text';
+  if (contentType !== undefined && JSON_MEDIA_TYPE.test(contentType)) return 'json';
+  if (contentType !== undefined && FORM_MEDIA_TYPE.test(contentType)) return 'form';
+  return LOOKS_LIKE_JSON.test(template) ? 'json' : 'text';
 }
 
 function textOf(value: unknown): string {
@@ -146,6 +146,13 @@ export function fixedOriginOf(template: string): string | undefined {
   }
 }
 
+const DOT_SEGMENT = /^(\.|%2e){1,2}$/i;
+
+function hasDotSegment(url: string): boolean {
+  const path = url.replace(/^[a-z]+:\/\/[^/?#]*/i, '').split(/[?#]/, 1)[0];
+  return path.split('/').some((segment) => DOT_SEGMENT.test(segment));
+}
+
 export function renderUrlTemplate(template: string, ctx: StepContext): string {
   if (!hasPlaceholders(template)) return template;
   const origin = fixedOriginOf(template);
@@ -158,5 +165,6 @@ export function renderUrlTemplate(template: string, ctx: StepContext): string {
     throw new UrlTemplateError('http url is invalid');
   }
   if (renderedOrigin !== origin) throw new UrlTemplateError('http url template must not change the destination origin');
+  if (hasDotSegment(rendered)) throw new UrlTemplateError('http url path must not contain . or .. segments');
   return rendered;
 }

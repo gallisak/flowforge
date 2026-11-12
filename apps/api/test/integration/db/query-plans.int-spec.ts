@@ -4,7 +4,10 @@ import { DataSource } from 'typeorm';
 import { dataSourceOptions } from '../../../src/db/data-source';
 import { TenantDb } from '../../../src/db/tenant-db.service';
 import { StepRun, WorkflowVersion } from '../../../src/entities';
+import { ApiConfig } from '../../../src/config/config';
 import { ExecutionsService } from '../../../src/executions/executions.service';
+import { NotificationsService } from '../../../src/notifications/notifications.service';
+import { WebhookSecretsService } from '../../../src/webhooks/webhook-secrets.service';
 import { WorkflowsService } from '../../../src/workflows/workflows.service';
 import { useIntegrationContext } from '../../support/context';
 
@@ -190,7 +193,7 @@ describe('query plans of the hot paths on a realistically sized database', () =>
     });
     await runner.release();
     db = new TenantDb(app);
-    executions = new ExecutionsService(db, { tenantMaxQueuedJobs: 10_000 });
+    executions = new ExecutionsService(db, { tenantMaxQueuedJobs: 10_000, jobMaxAttempts: 8 });
   }, 120_000);
 
   afterAll(async () => {
@@ -293,5 +296,20 @@ describe('query plans of the hot paths on a realistically sized database', () =>
 
     expectIndexed(plans, 'IDX_jobs_queued_by_tenant');
     expect(indexesOf(plans).some((index) => index === 'IDX_jobs_running_by_tenant' || index === 'IDX_jobs_expired_leases')).toBe(true);
+  });
+
+  it('lists the notifications of a tenant in one delivery state from an index without reading the others', async () => {
+    const notifications = new NotificationsService(db, {} as WebhookSecretsService, { ssrfAllowlist: [] } as unknown as ApiConfig);
+    const plans = await plansOf('list notifications by status', () => notifications.events(TENANT_1, { status: 'delivering', limit: 20 }));
+
+    expectIndexed(plans, 'IDX_outbox_events_tenant_status_created');
+    expect(rowsRemovedByFilter(plans)).toBeLessThan(100);
+  });
+
+  it('finds finished executions and notifications to purge from their partial indexes', async () => {
+    const plans = await plansOf('purge finished data', () => db.purgeFinishedData(30, 1_000));
+
+    expect(indexesOf(plans)).toEqual(expect.arrayContaining(['IDX_executions_finished', 'IDX_outbox_events_finished']));
+    expect(seqScansOfLargeTables(plans).filter((table) => !['workflows', 'workflow_versions'].includes(table))).toEqual([]);
   });
 });

@@ -1,5 +1,7 @@
 import { Execution, Job, StepRun } from '../../../src/entities';
+import { JobRunnerService } from '../../../src/engine/job-runner.service';
 import { useIntegrationContext } from '../../support/context';
+import { settledCalls } from '../../support/spies';
 import { seedTenant, seedWorkflow } from '../../support/db';
 import { eventually } from '../../support/eventually';
 import { Receiver, startReceiver } from '../../support/receiver';
@@ -97,11 +99,13 @@ describe('step checkpoints', () => {
 
   it('does not let a worker that lost the job write a checkpoint', async () => {
     const { execution, job } = await enqueue([{ id: 'slow', type: 'http', url: `${receiver.url}/slow` }]);
+    const processed = jest.spyOn(JobRunnerService.prototype, 'process');
+    ctx.onTeardown(() => processed.mockRestore());
 
     workers = await startInProcessWorkers(1);
     await eventually(() => expect(receiver.requests.some((r) => r.path === '/slow')).toBe(true));
     await ctx.ds.getRepository(Job).update(job.id, { lockedBy: 'new-owner', lockedUntil: new Date(Date.now() + 3_600_000) });
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    await settledCalls(processed);
 
     const [run] = await ctx.ds.getRepository(StepRun).findBy({ executionId: execution.id });
     expect(run).toMatchObject({ status: 'running', output: null, error: null });

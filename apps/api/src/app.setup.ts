@@ -1,6 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { IncomingMessage } from 'http';
+import { IncomingMessage, ServerResponse } from 'http';
 import { jsonTextExceedsDepth, MAX_JSON_DEPTH } from './common/json-depth';
 import { rejectNulReviver } from './common/storable';
 import { ApiExceptionFilter } from './common/api-exception.filter';
@@ -15,8 +15,30 @@ function keepRawBodyAndRejectDeepJson(req: RawBodyRequest, _res: unknown, body: 
   req.rawBody = body;
 }
 
+const UNSUPPORTED_BODY = 'Request body must be application/json in UTF-8';
+
+function hasBody(req: IncomingMessage): boolean {
+  return req.headers['transfer-encoding'] !== undefined || Number(req.headers['content-length'] ?? 0) > 0;
+}
+
+export function isJsonInUtf8(contentType: string | undefined): boolean {
+  if (!contentType) return false;
+  const [mediaType, ...parameters] = contentType.split(';').map((part) => part.trim().toLowerCase());
+  if (mediaType !== 'application/json') return false;
+  return parameters.every((parameter) => {
+    const [name, value = ''] = parameter.split('=').map((part) => part.trim());
+    return name !== 'charset' || ['utf-8', 'utf8', '"utf-8"', '"utf8"'].includes(value);
+  });
+}
+
+function acceptOnlyJsonBodies(req: IncomingMessage, res: ServerResponse, next: () => void): void {
+  if (!hasBody(req) || isJsonInUtf8(req.headers['content-type'])) return next();
+  res.writeHead(415, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify({ statusCode: 415, message: UNSUPPORTED_BODY }));
+}
+
 export function configureApp(app: INestApplication): INestApplication {
   app.use(assignRequestId);
+  app.use(acceptOnlyJsonBodies);
   (app as NestExpressApplication).useBodyParser('json', { inflate: false, reviver: rejectNulReviver, verify: keepRawBodyAndRejectDeepJson });
   app.use(enterRequestContext);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

@@ -1,4 +1,5 @@
-import { ZonedCronIterator } from './zoned-cron';
+import { parseExpression } from 'cron-parser';
+import { utcOffsetMs, ZonedCronIterator } from './zoned-cron';
 
 export const MISSED_RUN_POLICIES = ['skip', 'once', 'all'] as const;
 export type MissedRunPolicy = (typeof MISSED_RUN_POLICIES)[number];
@@ -21,7 +22,7 @@ export interface FiringPlan {
 }
 
 const FIRST_SEARCH_WINDOW_MS = 60 * 60 * 1000;
-export const SKIPPED_RUNS_COUNT_CAP = 1_000;
+export const SKIPPED_RUNS_COUNT_CAP = 100;
 
 function iterate(schedule: CronSchedule, after: Date): ZonedCronIterator {
   return new ZonedCronIterator(schedule.cron, schedule.timezone, after);
@@ -47,10 +48,12 @@ function followChain(schedule: CronSchedule, anchor: Date, until: Date, limit: n
 
 function countOccurrences(schedule: CronSchedule, first: Date, before: Date, cap: number): { count: number; capped: boolean } {
   if (first >= before) return { count: 0, capped: false };
-  const iterator = iterate(schedule, first);
-  let count = 1;
-  while (count < cap && iterator.next() < before) count++;
-  return { count, capped: count >= cap };
+  const wallOf = (instant: Date) => instant.getTime() + utcOffsetMs(schedule.timezone, instant.getTime());
+  const wallTimes = parseExpression(schedule.cron, { currentDate: new Date(wallOf(first) - 1000), tz: 'UTC' });
+  const beforeWall = wallOf(before);
+  let count = 0;
+  while (count < cap && wallTimes.next().getTime() < beforeWall) count++;
+  return { count: Math.max(1, count), capped: count >= cap };
 }
 
 export function latestOccurrencesBefore(schedule: CronSchedule, knownOccurrence: Date, before: Date, limit: number): Date[] {

@@ -16,8 +16,9 @@ function timeoutError(): Error {
   return error;
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  if (!UUID.test(params.id)) return problem(404, 'Execution not found');
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  if (!UUID.test(id)) return problem(404, 'Execution not found');
   const key = req.cookies.get(API_KEY_COOKIE)?.value;
   if (!key) return problem(401, 'Connect with an API key first');
 
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   let upstream: Response;
   try {
-    upstream = await fetch(`${API_URL}/executions/${params.id}/events`, {
+    upstream = await fetch(`${API_URL}/executions/${id}/events`, {
       headers: { 'x-api-key': key, accept: 'text/event-stream' },
       signal: upstreamAbort.signal,
       cache: 'no-store',
@@ -50,7 +51,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return new Response(upstream.body, {
     headers: {
       'content-type': 'text/event-stream',
-      'cache-control': 'no-cache, no-transform',
+      'cache-control': 'private, no-cache, no-transform',
+      vary: 'Cookie',
       'x-accel-buffering': 'no',
     },
   });

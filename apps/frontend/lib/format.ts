@@ -2,9 +2,10 @@ export function shortId(id: string | null | undefined): string {
   return id ? id.slice(0, 8) : '—';
 }
 
-export function formatDateTime(value: string | null | undefined): string {
+export function formatDateTime(value: string | null | undefined, timeZone?: string): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' });
+  if (!timeZone) return new Date(value).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'medium' });
+  return new Date(value).toLocaleString('en-GB', { timeZone, dateStyle: 'medium', timeStyle: 'long' });
 }
 
 export function formatDuration(from: string | null | undefined, to: string | null | undefined): string {

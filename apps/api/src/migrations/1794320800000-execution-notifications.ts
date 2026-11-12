@@ -233,6 +233,7 @@ export class ExecutionNotifications1794320800000 implements MigrationInterface {
     await queryRunner.query(`DROP FUNCTION record_execution_event(uuid)`);
     await queryRunner.query(`DROP TABLE "outbox_events"`);
     await queryRunner.query(`DROP TABLE "notification_endpoints"`);
+    await queryRunner.query(`DELETE FROM "webhook_secrets" WHERE "purpose" = 'outbound'`);
     await queryRunner.query(`ALTER TABLE "webhook_secrets" DROP COLUMN "purpose"`);
     await queryRunner.query(`ALTER TABLE "executions" DROP COLUMN "correlationId"`);
   }

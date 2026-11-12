@@ -1,6 +1,6 @@
 import { BeforeApplicationShutdown, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { IsNull, MoreThan } from 'typeorm';
+import { IsNull, Raw } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
@@ -165,11 +165,10 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
     return this.db.run(tenantId, async (em) => {
       const endpoint = await em.findOne(NotificationEndpoint, { where: { tenantId } });
       if (!endpoint) return null;
-      const now = new Date();
       const secrets = await em.find(WebhookSecret, {
         where: [
           { tenantId, purpose: 'outbound', expiresAt: IsNull() },
-          { tenantId, purpose: 'outbound', expiresAt: MoreThan(now) },
+          { tenantId, purpose: 'outbound', expiresAt: Raw((column) => `${column} > now()`) },
         ],
         order: { createdAt: 'DESC' },
       });

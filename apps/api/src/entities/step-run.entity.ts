@@ -32,6 +32,9 @@ export class StepRun {
   @Column({ type: 'jsonb', nullable: true })
   output: unknown;
 
+  @Column({ type: 'int', nullable: true, select: false, insert: false, update: false })
+  outputBytes?: number | null;
+
   @Column({ type: 'text', nullable: true })
   error: string | null;
 

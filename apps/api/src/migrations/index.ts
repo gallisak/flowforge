@@ -24,6 +24,11 @@ import { LongerTriggerKeys1794321300000 } from './1794321300000-longer-trigger-k
 import { PostponedSchedules1794321400000 } from './1794321400000-postponed-schedules';
 import { TenantAwareClaims1794321500000 } from './1794321500000-tenant-aware-claims';
 import { LeastPrivilegeGrants1794321600000 } from './1794321600000-least-privilege-grants';
+import { StepOutputSizes1794321700000 } from './1794321700000-step-output-sizes';
+import { PerStepAttempts1794321800000 } from './1794321800000-per-step-attempts';
+import { WatchedExecutionNotifications1794321850000 } from './1794321850000-watched-execution-notifications';
+import { DataRetention1794321900000 } from './1794321900000-data-retention';
+import { TenantLimitChecks1794322000000 } from './1794322000000-tenant-limit-checks';
 
 export const migrations = [
   Baseline1794305090749,
@@ -52,4 +57,9 @@ export const migrations = [
   PostponedSchedules1794321400000,
   TenantAwareClaims1794321500000,
   LeastPrivilegeGrants1794321600000,
+  StepOutputSizes1794321700000,
+  PerStepAttempts1794321800000,
+  WatchedExecutionNotifications1794321850000,
+  DataRetention1794321900000,
+  TenantLimitChecks1794322000000,
 ];

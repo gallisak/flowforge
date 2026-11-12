@@ -1,4 +1,4 @@
-import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, ValidateIf } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, Matches, ValidateIf } from 'class-validator';
 import { MISSED_RUN_POLICIES, MissedRunPolicy } from '../scheduler/cron-schedule';
 
 const isPresent = (_dto: object, value: unknown) => value !== undefined;
@@ -6,6 +6,7 @@ const isPresent = (_dto: object, value: unknown) => value !== undefined;
 export class CreateWorkflowDto {
   @IsString()
   @Length(1, 200)
+  @Matches(/\S/, { message: 'name must not be blank' })
   name: string;
 
   @IsArray()
@@ -34,6 +35,7 @@ export class UpdateWorkflowDto {
   @ValidateIf(isPresent)
   @IsString()
   @Length(1, 200)
+  @Matches(/\S/, { message: 'name must not be blank' })
   name?: string;
 
   @ValidateIf(isPresent)

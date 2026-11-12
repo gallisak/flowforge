@@ -5,24 +5,40 @@ const BEFORE_ANY_LOCAL_TIME_MS = 15 * HOUR_MS;
 const AFTER_ANY_LOCAL_TIME_MS = 13 * HOUR_MS;
 const NEARBY_MS = 30 * HOUR_MS;
 
+const MAX_CACHED_SPELLINGS = 1_000;
 const formatters = new Map<string, Intl.DateTimeFormat>();
+const spellings = new Map<string, Intl.DateTimeFormat>();
+
+function newFormatter(timezone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  });
+}
 
 function formatterFor(timezone: string): Intl.DateTimeFormat {
-  let formatter = formatters.get(timezone);
+  const known = spellings.get(timezone);
+  if (known) return known;
+  const candidate = newFormatter(timezone);
+  const canonical = candidate.resolvedOptions().timeZone;
+  let formatter = formatters.get(canonical);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-    });
-    formatters.set(timezone, formatter);
+    formatter = candidate;
+    formatters.set(canonical, formatter);
   }
+  if (spellings.size >= MAX_CACHED_SPELLINGS) spellings.delete(spellings.keys().next().value as string);
+  spellings.set(timezone, formatter);
   return formatter;
+}
+
+export function timezoneCacheSize(): { spellings: number; formatters: number } {
+  return { spellings: spellings.size, formatters: formatters.size };
 }
 
 export function utcOffsetMs(timezone: string, instantMs: number): number {

@@ -12,7 +12,7 @@ export interface DatabaseTimeouts {
 
 const CLIENT_TIMEOUT_MARGIN_MS = 5_000;
 
-export function dataSourceOptions(url: string, timeouts?: DatabaseTimeouts): DataSourceOptions {
+export function dataSourceOptions(url: string, timeouts?: DatabaseTimeouts, poolSize?: number): DataSourceOptions {
   return {
     type: 'postgres',
     url,
@@ -29,6 +29,7 @@ export function dataSourceOptions(url: string, timeouts?: DatabaseTimeouts): Dat
       idle_in_transaction_session_timeout: timeouts.statementTimeoutMs * 2,
       ...(timeouts.lockTimeoutMs ? { lock_timeout: timeouts.lockTimeoutMs } : {}),
       keepAlive: true,
+      ...(poolSize ? { max: poolSize } : {}),
     },
   };
 }

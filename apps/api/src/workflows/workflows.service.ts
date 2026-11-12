@@ -25,6 +25,14 @@ export interface WorkflowPage {
   nextCursor: string | null;
 }
 
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : item,
+  );
+}
+
 function firstRunAt(cron: string | null, timezone: string, enabled: boolean): Date | null {
   return enabled && cron !== null ? nextOccurrence({ cron, timezone }, new Date()) : null;
 }
@@ -69,9 +77,9 @@ export class WorkflowsService {
 
   create(tenantId: string, input: CreateWorkflowDto): Promise<Workflow> {
     const steps = validateSteps(input.steps);
-    validateSchedule(input.cron ?? null, input.timezone ?? 'UTC');
     return this.db.run(tenantId, async (em) => {
       await this.assertBelowWorkflowLimit(em, tenantId);
+      validateSchedule(input.cron ?? null, input.timezone ?? 'UTC');
       const wf = await em.save(
         em.create(Workflow, {
           tenantId,
@@ -93,10 +101,14 @@ export class WorkflowsService {
   update(tenantId: string, id: string, input: UpdateWorkflowDto): Promise<Workflow> {
     return this.db.run(tenantId, async (em) => {
       const wf = await this.findOwned(em, tenantId, id, true);
-      validateSchedule(input.cron === undefined ? wf.cron : input.cron, input.timezone ?? wf.timezone);
+      if (input.cron !== undefined || input.timezone !== undefined) {
+        validateSchedule(input.cron === undefined ? wf.cron : input.cron, input.timezone ?? wf.timezone);
+      }
       if (input.name !== undefined) wf.name = input.name;
-      if (input.steps !== undefined) {
-        wf.steps = validateSteps(input.steps);
+      const steps = input.steps === undefined ? undefined : validateSteps(input.steps);
+      const stepsChanged = steps !== undefined && canonicalJson(steps) !== canonicalJson(wf.steps);
+      if (steps !== undefined && stepsChanged) {
+        wf.steps = steps;
         wf.version += 1;
       }
       const scheduleBefore = [wf.cron, wf.timezone, wf.enabled].join('|');
@@ -110,7 +122,7 @@ export class WorkflowsService {
       }
       const saved = await em.save(wf);
       delete saved.scheduleRetryAt;
-      if (input.steps !== undefined) await this.recordVersion(em, saved);
+      if (stepsChanged) await this.recordVersion(em, saved);
       return saved;
     });
   }

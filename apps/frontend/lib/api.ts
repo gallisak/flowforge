@@ -11,12 +11,12 @@ export function unreachable(error: unknown): { status: number; message: string }
     : { status: 502, message: 'The API is not reachable' };
 }
 
-export function hasApiKey(): boolean {
-  return Boolean(cookies().get(API_KEY_COOKIE)?.value);
+export async function hasApiKey(): Promise<boolean> {
+  return Boolean((await cookies()).get(API_KEY_COOKIE)?.value);
 }
 
 async function apiResponse(path: string): Promise<Response> {
-  const key = cookies().get(API_KEY_COOKIE)?.value ?? '';
+  const key = (await cookies()).get(API_KEY_COOKIE)?.value ?? '';
   const res = await fetch(`${API_URL}${path}`, {
     headers: { 'x-api-key': key },
     cache: 'no-store',

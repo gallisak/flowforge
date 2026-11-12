@@ -34,6 +34,12 @@ export interface ReapedJob {
   attempts: number;
 }
 
+export interface PurgedRows {
+  executions: number;
+  outboxEvents: number;
+  workflowVersions: number;
+}
+
 @Injectable()
 export class TenantDb {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
@@ -82,8 +88,13 @@ export class TenantDb {
     return row;
   }
 
-  reapExpiredJobs(): Promise<ReapedJob[]> {
-    return this.dataSource.query('SELECT * FROM reap_expired_jobs()');
+  reapExpiredJobs(retryBaseMs = 1_000, retryCapMs = 300_000): Promise<ReapedJob[]> {
+    return this.dataSource.query('SELECT * FROM reap_expired_jobs($1, $2)', [retryBaseMs, retryCapMs]);
+  }
+
+  async purgeFinishedData(retentionDays: number, batch: number): Promise<PurgedRows> {
+    const [row]: PurgedRows[] = await this.dataSource.query('SELECT * FROM purge_finished_data(make_interval(days => $1), $2)', [retentionDays, batch]);
+    return row;
   }
 
   claimOutboxEvents(dispatcherId: string, leaseSeconds: number, limit: number, perTenant: number): Promise<OutboxEvent[]> {

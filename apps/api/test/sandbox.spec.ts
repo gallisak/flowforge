@@ -1,3 +1,4 @@
+import { Worker } from 'worker_threads';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from '../src/engine/sandbox/transform-sandbox';
 
 describe('TransformSandbox', () => {
@@ -165,4 +166,41 @@ describe('TransformSandbox with hostile thrown values', () => {
     }
   });
 
+});
+
+describe('TransformSandbox result size', () => {
+  const limits = { timeoutMs: 1_000, memoryBytes: 64 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES, outputMaxBytes: 1024 * 1024 };
+  let sandbox: TransformSandbox;
+
+  beforeAll(() => {
+    sandbox = new TransformSandbox(limits, 1);
+  });
+
+  afterAll(async () => {
+    await sandbox.close();
+    jest.restoreAllMocks();
+  });
+
+  it('does not copy an oversized result to the host when the expression breaks out of its wrapper', async () => {
+    const copied: number[] = [];
+    const emit = Worker.prototype.emit;
+    jest.spyOn(Worker.prototype, 'emit').mockImplementation(function (this: Worker, event: string | symbol, ...args: unknown[]) {
+      const reply = args[0] as { output?: unknown; error?: unknown } | undefined;
+      if (event === 'message' && reply) copied.push(JSON.stringify(reply).length);
+      return emit.call(this, event, ...args);
+    });
+    const escape = '0); })(ctx)); return "J" + "1".repeat(5000000); ((function (ctx) { return (0';
+
+    const error = await sandbox.evaluate(escape, {}).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(TransformError);
+    expect(Math.max(...copied)).toBeLessThan(2 * 1024 * 1024);
+  });
+
+  it('cannot replace the serialisation the wrapper uses', async () => {
+    await expect(sandbox.evaluate('(JSON.stringify = () => "1".repeat(5000000), { ok: true })', {})).resolves.toEqual({ ok: true });
+  });
 });

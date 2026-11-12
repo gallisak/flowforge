@@ -2,6 +2,10 @@ x-database-urls:
   app: &app-database-url postgres://flowforge_app:${FLOWFORGE_APP_PASSWORD:?set FLOWFORGE_APP_PASSWORD in .env}@postgres:5432/flowforge
   owner: &owner-database-url postgres://flowforge_owner:${FLOWFORGE_OWNER_PASSWORD:?set FLOWFORGE_OWNER_PASSWORD in .env}@postgres:5432/flowforge
 
+x-logging: &logging
+  driver: json-file
+  options: { max-size: 10m, max-file: '3' }
+
 x-ops-healthcheck: &ops-healthcheck
   test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
   interval: 5s
@@ -27,9 +31,12 @@ services:
       test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U flowforge -d flowforge']
       interval: 3s
       retries: 20
+    restart: unless-stopped
+    logging: *logging
 
   migrate:
     build: ./apps/api
+    image: flowforge-api:local
     command: ['node', 'dist/migrate']
     env_file: ./apps/api/.env
     environment:
@@ -40,9 +47,11 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
     restart: 'no'
+    logging: *logging
 
   api:
-    build: ./apps/api
+    image: flowforge-api:local
+    pull_policy: never
     env_file: ./apps/api/.env
     environment:
       NODE_ENV: production
@@ -54,9 +63,13 @@ services:
     init: true
     ports: ['127.0.0.1:${API_PORT:-3000}:3000']
     healthcheck: *ops-healthcheck
+    restart: unless-stopped
+    mem_limit: 1g
+    logging: *logging
 
   worker:
-    build: ./apps/api
+    image: flowforge-api:local
+    pull_policy: never
     command: ['node', 'dist/worker']
     init: true
     stop_grace_period: 30s
@@ -69,11 +82,15 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck: *ops-healthcheck
+    restart: unless-stopped
+    mem_limit: 1g
+    logging: *logging
     deploy:
       replicas: 2
 
   scheduler:
-    build: ./apps/api
+    image: flowforge-api:local
+    pull_policy: never
     command: ['node', 'dist/scheduler']
     init: true
     stop_grace_period: 30s
@@ -86,6 +103,9 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     healthcheck: *ops-healthcheck
+    restart: unless-stopped
+    mem_limit: 512m
+    logging: *logging
     deploy:
       replicas: 2
 
@@ -93,6 +113,7 @@ services:
     build: ./apps/frontend
     environment:
       API_URL: http://api:3000
+      APP_ORIGIN: ${APP_ORIGIN:-}
     depends_on:
       api: { condition: service_healthy }
     init: true
@@ -103,6 +124,9 @@ services:
       timeout: 3s
       retries: 6
       start_period: 10s
+    restart: unless-stopped
+    mem_limit: 512m
+    logging: *logging
 
 volumes:
   pgdata:

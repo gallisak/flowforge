@@ -4,7 +4,7 @@ import { GET } from '@/app/api/executions/[id]/events/route';
 import { API_TIMEOUT_MS } from '@/lib/api';
 
 const ID = '48c61687-afc1-474c-85ae-678f21b706d2';
-const context = { params: { id: ID } };
+const context = { params: Promise.resolve({ id: ID }) };
 
 function make(init: { key?: string | null; signal?: AbortSignal } = {}) {
   const headers = new Headers();

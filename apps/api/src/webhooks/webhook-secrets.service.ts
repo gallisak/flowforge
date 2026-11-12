@@ -44,9 +44,13 @@ export class WebhookSecretsService {
     return this.db.run(tenantId, async (em) => (await this.activeSecrets(em, tenantId, purpose)).map(summary));
   }
 
+  async lock(em: EntityManager, tenantId: string, purpose: SecretPurpose): Promise<void> {
+    await em.query(`SELECT pg_advisory_xact_lock(hashtextextended('webhook-secrets:' || $1 || ':' || $2, 0))`, [tenantId, purpose]);
+  }
+
   rotate(tenantId: string, purpose: SecretPurpose = 'inbound'): Promise<WebhookSecretSummary & { secret: string }> {
     return this.db.run(tenantId, async (em) => {
-      await em.query(`SELECT pg_advisory_xact_lock(hashtextextended('webhook-secrets:' || $1 || ':' || $2, 0))`, [tenantId, purpose]);
+      await this.lock(em, tenantId, purpose);
       const now = new Date();
       const graceEnds = new Date(now.getTime() + this.config.webhookSecretGraceSeconds * 1000);
       await em.delete(WebhookSecret, { tenantId, purpose, expiresAt: LessThanOrEqual(now) });

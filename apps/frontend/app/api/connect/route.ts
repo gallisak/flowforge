@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, unreachable } from '@/lib/api';
 import { MAX_CONNECT_BODY_BYTES, readLimitedText } from '@/lib/request-body';
-import { isSameOrigin } from '@/lib/same-origin';
+import { isSameOrigin, servedOverHttps } from '@/lib/same-origin';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_KEY_LENGTH = 200;
-const COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
-
-function servedOverHttps(req: NextRequest): boolean {
-  return (req.headers.get('x-forwarded-proto') ?? req.nextUrl.protocol.replace(':', '')) === 'https';
-}
+const COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60;
 
 function problem(status: number, message: string) {
   return NextResponse.json({ statusCode: status, message }, { status });

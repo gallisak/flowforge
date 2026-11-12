@@ -7,7 +7,7 @@ import { Tenant } from '../entities';
 import { WebhookSecretsService } from '../webhooks/webhook-secrets.service';
 import { AdminTokenGuard } from './admin-token.guard';
 
-class CreateTenantDto {
+export class CreateTenantDto {
   @IsString()
   @Length(2, 200)
   name: string;

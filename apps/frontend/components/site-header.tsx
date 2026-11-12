@@ -2,8 +2,8 @@ import Link from 'next/link';
 import { hasApiKey } from '@/lib/api';
 import { DisconnectButton } from './disconnect-button';
 
-export function SiteHeader() {
-  const connected = hasApiKey();
+export async function SiteHeader() {
+  const connected = await hasApiKey();
   return (
     <header className="border-b bg-background">
       <div className="container flex h-14 items-center gap-6">

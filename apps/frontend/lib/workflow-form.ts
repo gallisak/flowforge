@@ -80,19 +80,26 @@ function stepProblem(step: unknown, index: number, seen: Set<string>): string | 
   }
 }
 
-export function isKnownTimezone(timezone: string, known: readonly string[]): boolean {
-  return timezone === 'UTC' || known.includes(timezone);
+export function isValidTimezone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function validateWorkflow(values: WorkflowFormValues, knownTimezones: readonly string[]): { errors: FieldErrors; payload?: WorkflowPayload } {
+export function validateWorkflow(values: WorkflowFormValues, original?: WorkflowDto): { errors: FieldErrors; payload?: WorkflowPayload } {
   const errors: FieldErrors = {};
-  const name = values.name.trim();
-  if (!name) errors.name = 'Name is required';
-  else if (name.length > 200) errors.name = 'Name must be at most 200 characters';
+  const nameUnchanged = original !== undefined && values.name === original.name;
+  const name = nameUnchanged ? values.name : values.name.trim();
+  if (!nameUnchanged && !name) errors.name = 'Name is required';
+  else if (!nameUnchanged && name.length > 200) errors.name = 'Name must be at most 200 characters';
 
   const cron = values.cron.trim();
   if (cron && ![5, 6].includes(cron.split(/\s+/).length)) errors.cron = 'Cron must have 5 fields, or 6 with seconds';
-  if (!isKnownTimezone(values.timezone, knownTimezones)) errors.timezone = 'Choose a time zone from the list';
+  const timezoneUnchanged = original !== undefined && values.timezone === original.timezone;
+  if (!timezoneUnchanged && !isValidTimezone(values.timezone)) errors.timezone = 'Time zone must be a valid IANA time zone';
   if (!POLICIES.includes(values.missedRunPolicy)) errors.missedRunPolicy = 'Choose a policy';
 
   let steps: unknown;

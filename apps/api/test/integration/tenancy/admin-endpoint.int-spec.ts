@@ -19,8 +19,7 @@ describe('tenant creation endpoint', () => {
 
   const create = (body: unknown, token?: string) => {
     const req = request(app.getHttpServer()).post('/tenants');
-    if (token !== undefined) req.set('x-admin-token', token);
-    return req.send(body as object);
+    return (token === undefined ? req : req.set('x-admin-token', token)).send(body as object);
   };
 
   it.each([

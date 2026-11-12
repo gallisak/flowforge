@@ -3,7 +3,7 @@
   "info": {
     "title": "FlowForge API",
     "version": "1.0.0",
-    "description": "Multi-tenant durable workflow platform. Tenant endpoints use the `x-api-key` header; every tenant request counts against its per-minute rate limit. Request bodies are limited to 100 KiB and 64 levels of JSON nesting; unknown properties of request bodies are ignored."
+    "description": "Multi-tenant durable workflow platform. Tenant endpoints use the `x-api-key` header; every tenant request counts against its per-minute rate limit. Request bodies must be `application/json` in UTF-8 (`415` otherwise) and are limited to 100 KiB and 64 levels of JSON nesting; unknown properties of request bodies are ignored."
   },
   "servers": [
     {
@@ -78,6 +78,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           }
         },
         "requestBody": {
@@ -136,6 +139,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           }
         },
         "requestBody": {
@@ -290,6 +296,9 @@
                 }
               }
             }
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           }
         },
         "requestBody": {
@@ -421,6 +430,9 @@
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           }
         },
         "requestBody": {
@@ -433,7 +445,8 @@
             }
           }
         },
-        "operationId": "updateWorkflow"
+        "operationId": "updateWorkflow",
+        "description": "A new version is recorded only when the steps differ from the current ones."
       },
       "delete": {
         "tags": [
@@ -545,6 +558,9 @@
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           }
         },
         "requestBody": {
@@ -717,6 +733,139 @@
         "operationId": "getExecution"
       }
     },
+    "/executions/{id}/output": {
+      "get": {
+        "tags": [
+          "Executions"
+        ],
+        "summary": "Get the full output of an execution",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The output of the last step, not shortened; `null` until the execution succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The stored JSON value as it is, any JSON type."
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getExecutionOutput",
+        "description": "Answers the stored JSON value as it is; use it when a detail or a stream snapshot reports `outputTruncated`."
+      }
+    },
+    "/executions/{id}/steps/{stepIndex}/output": {
+      "get": {
+        "tags": [
+          "Executions"
+        ],
+        "summary": "Get the full output of one step",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          },
+          {
+            "name": "stepIndex",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            },
+            "description": "Position of the step in the workflow version, from 0."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored output of the step run, not shortened; `null` while it has none.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "The stored JSON value as it is, any JSON type."
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "operationId": "getStepOutput",
+        "description": "Answers the stored JSON value as it is; use it when a detail or a stream snapshot reports `outputTruncated`."
+      }
+    },
     "/executions/{id}/events": {
       "get": {
         "tags": [
@@ -764,7 +913,7 @@
             "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
-        "description": "At most EXECUTION_STREAMS_PER_TENANT open streams per tenant and API instance.",
+        "description": "At most EXECUTION_STREAMS_PER_TENANT open streams per tenant and API instance. Every snapshot has the same shape as `GET /executions/{id}`, with outputs larger than 8 KiB left out. All streams of one execution share one read per change. A client that stops reading gets only the latest snapshot once it reads again; its stream is closed when 2 MiB are buffered or after 60 s without progress.",
         "operationId": "followExecution"
       }
     },
@@ -1136,6 +1285,9 @@
                 }
               }
             }
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
           }
         },
         "requestBody": {
@@ -1819,7 +1971,9 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 200
+            "maxLength": 200,
+            "pattern": "\\S",
+            "description": "Must contain a character other than white space."
           },
           "steps": {
             "$ref": "#/components/schemas/Steps"
@@ -1830,7 +1984,7 @@
           "timezone": {
             "type": "string",
             "default": "UTC",
-            "description": "IANA time zone, for example Europe/Kyiv."
+            "description": "IANA time zone, any spelling that Intl accepts (for example `Europe/Kyiv`, `Asia/Kolkata`, `US/Eastern`); stored as sent."
           },
           "enabled": {
             "type": "boolean",
@@ -1848,7 +2002,9 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 200
+            "maxLength": 200,
+            "pattern": "\\S",
+            "description": "Must contain a character other than white space."
           },
           "steps": {
             "$ref": "#/components/schemas/Steps"
@@ -1857,7 +2013,8 @@
             "$ref": "#/components/schemas/Cron"
           },
           "timezone": {
-            "type": "string"
+            "type": "string",
+            "description": "IANA time zone, any spelling that Intl accepts (for example `Europe/Kyiv`, `Asia/Kolkata`, `US/Eastern`); stored as sent."
           },
           "enabled": {
             "type": "boolean"
@@ -2037,6 +2194,7 @@
           "attempts",
           "idempotencyKey",
           "output",
+          "outputTruncated",
           "error",
           "startedAt",
           "wakeAt",
@@ -2082,7 +2240,11 @@
             "description": "`<executionId>:<stepId>` for http steps, the same for every attempt."
           },
           "output": {
-            "description": "Checkpoint: a succeeded step is never run again."
+            "description": "Checkpoint: a succeeded step is never run again. Null in a detail or a stream snapshot when it is larger than 8 KiB."
+          },
+          "outputTruncated": {
+            "type": "boolean",
+            "description": "True when the output is larger than 8 KiB; the full value is at `GET /executions/{id}/steps/{stepIndex}/output`."
           },
           "error": {
             "type": [
@@ -2119,9 +2281,14 @@
           {
             "type": "object",
             "required": [
+              "outputTruncated",
               "steps"
             ],
             "properties": {
+              "outputTruncated": {
+                "type": "boolean",
+                "description": "True when the output is larger than 8 KiB; `output` is then null and the full value is at `GET /executions/{id}/output`."
+              },
               "steps": {
                 "type": "array",
                 "items": {
@@ -2633,7 +2800,7 @@
         }
       },
       "TooManyRequests": {
-        "description": "A tenant limit is reached: requests per minute, queued jobs or open streams.",
+        "description": "A limit is reached: requests per minute, queued jobs, open streams, or failed authentication attempts from one address (AUTH_FAILURES_PER_MINUTE).",
         "headers": {
           "Retry-After": {
             "$ref": "#/components/headers/RetryAfter"
@@ -2658,6 +2825,16 @@
       },
       "ServiceUnavailable": {
         "description": "The API is shutting down; reconnect to another instance.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "UnsupportedMediaType": {
+        "description": "The body is not `application/json` in UTF-8.",
         "content": {
           "application/json": {
             "schema": {

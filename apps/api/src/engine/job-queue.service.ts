@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { ReapedJob, TenantDb } from '../db/tenant-db.service';
 import { EntityManager } from 'typeorm';
-import { Execution, Job, StepRun } from '../entities';
+import { Execution, Job } from '../entities';
 
 export interface RetryPolicy {
   baseMs: number;
@@ -77,14 +77,15 @@ export class JobQueueService {
   }
 
   fail(job: Job, workerId: string, error: string, retryable: boolean, policy: RetryPolicy): Promise<FailOutcome> {
-    const outcome: Exclude<FailOutcome, 'lost'> = !retryable ? 'failed' : job.attempts < job.maxAttempts ? 'retry' : 'dead';
+    const stepAttempts = job.attempts - (job.attemptsAtProgress ?? 0);
+    const outcome: Exclude<FailOutcome, 'lost'> = !retryable ? 'failed' : stepAttempts < job.maxAttempts ? 'retry' : 'dead';
     return this.db.run(job.tenantId, async (em) => {
       const released = { lockedBy: null, lockedUntil: null, lastError: error };
       const result = await em.update(
         Job,
         this.ownedBy(job, workerId),
         outcome === 'retry'
-          ? { ...released, status: 'queued', runAt: intervalFromNow(retryDelayMs(job.attempts, policy) / 1000) }
+          ? { ...released, status: 'queued', runAt: intervalFromNow(retryDelayMs(stepAttempts, policy) / 1000) }
           : { ...released, status: outcome },
       );
       if (result.affected !== 1) return 'lost';
@@ -93,13 +94,13 @@ export class JobQueueService {
         await em.update(Execution, job.executionId, { status: 'pending', error });
       }
       if (outcome === 'failed') {
-        await em.update(Execution, job.executionId, { status: 'failed', error, finishedAt: new Date() });
+        await em.update(Execution, job.executionId, { status: 'failed', error, finishedAt: () => 'now()' });
       }
       if (outcome === 'dead') {
         await em.update(Execution, job.executionId, {
           status: 'failed',
-          error: `${error} (gave up after ${job.attempts} attempts)`,
-          finishedAt: new Date(),
+          error: `${error} (gave up after ${stepAttempts} attempts)`,
+          finishedAt: () => 'now()',
         });
       }
       if (outcome !== 'retry') await recordExecutionEvent(em, job.executionId);
@@ -141,9 +142,16 @@ export class JobQueueService {
     });
   }
 
-  finishStep(job: Job, workerId: string, stepRunId: string, output: unknown): Promise<void> {
+  finishStep(job: Job, workerId: string, stepRunId: string, output: unknown): Promise<unknown> {
     return this.withOwnership(job, workerId, async (em) => {
-      await em.update(StepRun, stepRunId, { status: 'succeeded', output: output as object, error: null, finishedAt: () => 'now()' });
+      const [[row]]: [Array<{ output: unknown }>, number] = await em.query(
+        `UPDATE step_runs SET "status" = 'succeeded', "output" = $2::jsonb, "error" = NULL, "finishedAt" = now()
+          WHERE id = $1
+          RETURNING "output"`,
+        [stepRunId, output === undefined ? null : JSON.stringify(output)],
+      );
+      await this.recordProgress(em, job);
+      return row.output;
     });
   }
 
@@ -163,16 +171,24 @@ export class JobQueueService {
 
   wakeUp(job: Job, workerId: string, stepIndex: number, output: unknown): Promise<'resumed' | 'sleeping'> {
     return this.withOwnership(job, workerId, async (em) => {
-      const due: unknown[] = await em.query(
+      const [due]: [unknown[], number] = await em.query(
         `UPDATE step_runs SET "status" = 'succeeded', "output" = $3::jsonb, "finishedAt" = now()
           WHERE "executionId" = $1 AND "stepIndex" = $2 AND "status" = 'waiting' AND "wakeAt" <= now()
           RETURNING id`,
         [job.executionId, stepIndex, JSON.stringify(output)],
       );
-      if (due.length === 1) return 'resumed';
+      if (due.length === 1) {
+        await this.recordProgress(em, job);
+        return 'resumed';
+      }
       await this.parkUntilWakeUp(em, job, stepIndex);
       return 'sleeping';
     });
+  }
+
+  private async recordProgress(em: EntityManager, job: Job): Promise<void> {
+    await em.query(`UPDATE jobs SET "attemptsAtProgress" = "attempts" - 1 WHERE id = $1`, [job.id]);
+    job.attemptsAtProgress = job.attempts - 1;
   }
 
   private async parkUntilWakeUp(em: EntityManager, job: Job, stepIndex: number): Promise<void> {
@@ -202,8 +218,8 @@ export class JobQueueService {
     });
   }
 
-  reapExpired(): Promise<ReapedJob[]> {
-    return this.db.reapExpiredJobs();
+  reapExpired(policy: RetryPolicy): Promise<ReapedJob[]> {
+    return this.db.reapExpiredJobs(policy.baseMs, policy.capMs);
   }
 
   private ownedBy(job: Job, workerId: string) {

@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import ExecutionPage from '@/app/executions/[id]/page';
+import { ExecutionView } from '@/components/execution-view';
 import { FakeEventSource } from '../fake-event-source';
 
 const running = { id: 'exec-1', status: 'running', error: null, steps: [] };
@@ -38,22 +38,27 @@ describe('F-22 the execution page does not leak work or keep updating forever', 
   });
 
   it('stops all network activity and timers once the page is closed', async () => {
-    const page = render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    const page = render(<ExecutionView id="exec-1" />);
     await advance(100);
     publish(running);
     await advance(3_000);
 
+    for (const source of FakeEventSource.open()) source.fail(FakeEventSource.CLOSED);
+    await advance(0);
     page.unmount();
     const requests = fetchMock.mock.calls.length;
+    const connections = FakeEventSource.instances.length;
     await advance(10_000);
 
+    expect(requests).toBeGreaterThan(0);
     expect(fetchMock.mock.calls.length).toBe(requests);
+    expect(FakeEventSource.instances).toHaveLength(connections);
     expect(FakeEventSource.open()).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it('stops updating once the execution has finished', async () => {
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    render(<ExecutionView id="exec-1" />);
     await advance(100);
     publish(running);
     await advance(2_000);
@@ -68,25 +73,34 @@ describe('F-22 the execution page does not leak work or keep updating forever', 
     expect(FakeEventSource.open()).toHaveLength(0);
   });
 
-  it('never keeps more than one request to the backend in flight', async () => {
+  it('never keeps more than one connection or request to the backend open, also while the connection keeps failing', async () => {
     let inFlight = 0;
     let mostInFlight = 0;
-    fetchMock.mockImplementation(() => {
+    let mostOpen = 0;
+    fetchMock.mockImplementation(async () => {
       inFlight++;
       mostInFlight = Math.max(mostInFlight, inFlight);
-      return new Promise(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      inFlight--;
+      return json({ statusCode: 502, message: 'The API is not reachable' }, 502);
     });
 
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
-    await advance(10_000);
+    render(<ExecutionView id="exec-1" />);
+    for (let i = 0; i < 20; i++) {
+      await advance(500);
+      mostOpen = Math.max(mostOpen, FakeEventSource.open().length);
+      for (const source of FakeEventSource.open()) source.fail(FakeEventSource.CLOSED);
+    }
 
-    expect(mostInFlight).toBeLessThanOrEqual(1);
+    expect(FakeEventSource.instances.length).toBeGreaterThan(1);
+    expect(mostOpen).toBe(1);
+    expect(mostInFlight).toBe(1);
   });
 
   it('shows an error instead of loading forever when the execution cannot be loaded', async () => {
     fetchMock.mockImplementation(() => json({ statusCode: 404, message: 'Execution not found' }, 404));
 
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    render(<ExecutionView id="exec-1" />);
     await advance(100);
     for (const source of FakeEventSource.open()) source.fail(FakeEventSource.CLOSED);
     await advance(3_000);
@@ -95,7 +109,7 @@ describe('F-22 the execution page does not leak work or keep updating forever', 
   });
 
   it('shows that it is reconnecting after the connection drops and recovers afterwards', async () => {
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    render(<ExecutionView id="exec-1" />);
     await advance(100);
     publish(running);
     await advance(100);

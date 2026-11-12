@@ -87,7 +87,7 @@ export class StepExecutor implements OnApplicationShutdown {
     await Promise.all([this.sandbox.close(), this.httpClient.close()]);
   }
 
-  async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
+  async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<{ output: unknown; bytes: number }> {
     const result = await this.run(step, ctx, runtime);
     if (valueExceedsDepth(result, MAX_JSON_DEPTH)) {
       throw new StepError(`step output is nested deeper than ${MAX_JSON_DEPTH} levels`, false);
@@ -95,7 +95,7 @@ export class StepExecutor implements OnApplicationShutdown {
     const output = toStorable(result);
     const size = output === undefined ? 0 : Buffer.byteLength(JSON.stringify(output));
     if (size > this.outputMaxBytes) throw new StepError(`step output exceeds ${this.outputMaxBytes} bytes`, false);
-    return output;
+    return { output, bytes: size };
   }
 
   private async run(step: StepDefinition, ctx: StepContext, runtime: StepRuntime): Promise<unknown> {

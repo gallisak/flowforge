@@ -7,6 +7,8 @@ export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
 @Index('IDX_executions_tenant_created', ['tenantId', 'createdAt', 'id'])
 @Index('IDX_executions_tenant_status_created', ['tenantId', 'status', 'createdAt', 'id'])
 @Index('IDX_executions_tenant_workflow_created', ['tenantId', 'workflowId', 'createdAt', 'id'])
+@Index('IDX_executions_finished', ['finishedAt'], { where: `"status" IN ('succeeded', 'failed')` })
+@Index('IDX_executions_unfinished_version', ['workflowId', 'workflowVersion'], { where: `"status" NOT IN ('succeeded', 'failed')` })
 @Index('UQ_executions_tenant_trigger_key', ['tenantId', 'triggerKey'], { unique: true, where: '"triggerKey" IS NOT NULL' })
 export class Execution {
   @PrimaryGeneratedColumn('uuid')
@@ -29,6 +31,9 @@ export class Execution {
 
   @Column({ type: 'jsonb', nullable: true })
   output: unknown;
+
+  @Column({ type: 'int', nullable: true, select: false, insert: false, update: false })
+  outputBytes?: number | null;
 
   @Column({ type: 'text', nullable: true })
   error: string | null;

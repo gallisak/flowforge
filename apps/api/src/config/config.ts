@@ -26,14 +26,18 @@ export interface ApiConfig extends ObservabilityConfig {
   port: number;
   metricsTopTenants: number;
   executionStreamsPerTenant: number;
+  executionEventsPingMs: number;
   databaseUrl: string;
   databaseTimeouts: DatabaseTimeouts;
+  databasePoolSize: number;
   adminToken: string;
   webhookToleranceSeconds: number;
   webhookSecretGraceSeconds: number;
   tenantRateLimitPerMinute: number;
+  authFailuresPerMinute: number;
   tenantMaxQueuedJobs: number;
   tenantMaxWorkflows: number;
+  jobMaxAttempts: number;
   ssrfAllowlist: readonly string[];
 }
 
@@ -41,6 +45,7 @@ export interface WorkerConfig extends ObservabilityConfig {
   nodeEnv: NodeEnv;
   databaseUrl: string;
   databaseTimeouts: DatabaseTimeouts;
+  databasePoolSize: number;
   workerConcurrency: number;
   leaseSeconds: number;
   reaperIntervalMs: number;
@@ -53,8 +58,11 @@ export interface WorkerConfig extends ObservabilityConfig {
   httpMaxRedirects: number;
   httpMaxResponseBytes: number;
   stepOutputMaxBytes: number;
+  executionOutputMaxBytes: number;
   ssrfAllowlist: readonly string[];
   tenantMaxConcurrentJobs: number;
+  retentionDays: number;
+  retentionIntervalMs: number;
   outbox: OutboxConfig;
 }
 
@@ -62,15 +70,18 @@ export interface SchedulerConfig extends ObservabilityConfig {
   nodeEnv: NodeEnv;
   databaseUrl: string;
   databaseTimeouts: DatabaseTimeouts;
+  databasePoolSize: number;
   schedulerTickMs: number;
   schedulerMisfireGraceMs: number;
   schedulerMaxCatchUpRuns: number;
   schedulerPostponeMs: number;
   tenantMaxQueuedJobs: number;
+  jobMaxAttempts: number;
 }
 
 export interface QueueLimits {
   tenantMaxQueuedJobs: number;
+  jobMaxAttempts: number;
 }
 
 export interface WorkflowLimits {
@@ -99,6 +110,8 @@ export class ConfigError extends Error {
 const NODE_ENVS: readonly NodeEnv[] = ['development', 'test', 'production'];
 const PRODUCTION_ADMIN_TOKEN_MIN_LENGTH = 32;
 const ADMIN_TOKEN_MIN_LENGTH = 8;
+const DEFAULT_POOL_SIZE = 10;
+const SPARE_WORKER_CONNECTIONS = 2;
 const ALLOWLIST_ENTRY = /^(\[[0-9a-f:.]+\]|[a-z0-9-]+(\.[a-z0-9-]+)*\.?)(:\d{1,5})?$/;
 
 class EnvReader {
@@ -200,6 +213,10 @@ class EnvReader {
     };
   }
 
+  jobMaxAttempts(): number {
+    return this.integer('JOB_MAX_ATTEMPTS', 8, 1, 100);
+  }
+
   allowlist(name: string): string[] {
     const entries = (this.env[name] ?? '')
       .split(',')
@@ -225,30 +242,41 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     ...read.observability(),
     metricsTopTenants: read.integer('METRICS_TOP_TENANTS', 20, 1, 1_000),
     executionStreamsPerTenant: read.integer('EXECUTION_STREAMS_PER_TENANT', 20, 1, 10_000),
+    executionEventsPingMs: read.integer('EXECUTION_EVENTS_PING_MS', 30_000, 100, 600_000),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
     databaseTimeouts: read.databaseTimeouts(),
+    databasePoolSize: read.integer('DB_POOL_SIZE', DEFAULT_POOL_SIZE, 2, 1_000),
     adminToken: read.adminToken(nodeEnv),
     webhookToleranceSeconds: read.integer('WEBHOOK_TOLERANCE_SECONDS', 300, 10, 3_600),
     webhookSecretGraceSeconds: read.integer('WEBHOOK_SECRET_GRACE_SECONDS', 86_400, 0, 2_592_000),
     tenantRateLimitPerMinute: read.integer('TENANT_RATE_LIMIT_PER_MINUTE', 600, 1, 1_000_000),
+    authFailuresPerMinute: read.integer('AUTH_FAILURES_PER_MINUTE', 60, 1, 1_000_000),
     tenantMaxQueuedJobs: read.integer('TENANT_MAX_QUEUED_JOBS', 10_000, 1, 10_000_000),
     tenantMaxWorkflows: read.integer('TENANT_MAX_WORKFLOWS', 1_000, 1, 1_000_000),
+    jobMaxAttempts: read.jobMaxAttempts(),
     ssrfAllowlist: read.allowlist('SSRF_ALLOWLIST'),
   });
 }
 
 export function loadSchedulerConfig(env: Env = process.env): SchedulerConfig {
   const read = new EnvReader(env);
+  const schedulerTickMs = read.integer('SCHEDULER_TICK_MS', 5_000, 1_000, 3_600_000);
+  const schedulerMisfireGraceMs = read.integer('SCHEDULER_MISFIRE_GRACE_MS', 60_000, 1_000, 3_600_000);
+  const schedulerPostponeMs = read.integer('SCHEDULER_POSTPONE_MS', 30_000, 100, 3_600_000);
+  if (schedulerTickMs >= schedulerMisfireGraceMs) read.problems.push('SCHEDULER_TICK_MS must be shorter than SCHEDULER_MISFIRE_GRACE_MS');
+  if (schedulerPostponeMs >= schedulerMisfireGraceMs) read.problems.push('SCHEDULER_POSTPONE_MS must be shorter than SCHEDULER_MISFIRE_GRACE_MS');
   return read.done({
     nodeEnv: read.nodeEnv(),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
     databaseTimeouts: read.databaseTimeouts(),
+    databasePoolSize: read.integer('DB_POOL_SIZE', DEFAULT_POOL_SIZE, 2, 1_000),
     ...read.observability(),
-    schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 5_000, 1_000, 3_600_000),
-    schedulerMisfireGraceMs: read.integer('SCHEDULER_MISFIRE_GRACE_MS', 60_000, 1_000, 3_600_000),
+    schedulerTickMs,
+    schedulerMisfireGraceMs,
     schedulerMaxCatchUpRuns: read.integer('SCHEDULER_MAX_CATCH_UP_RUNS', 100, 1, 1_000),
-    schedulerPostponeMs: read.integer('SCHEDULER_POSTPONE_MS', 30_000, 100, 3_600_000),
+    schedulerPostponeMs,
     tenantMaxQueuedJobs: read.integer('TENANT_MAX_QUEUED_JOBS', 10_000, 1, 10_000_000),
+    jobMaxAttempts: read.jobMaxAttempts(),
   });
 }
 
@@ -257,11 +285,26 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
   const retryBaseMs = read.integer('RETRY_BASE_MS', 1_000, 10, 600_000);
   const retryCapMs = read.integer('RETRY_CAP_MS', 300_000, 10, 86_400_000);
   if (retryCapMs < retryBaseMs) read.problems.push('RETRY_CAP_MS must not be smaller than RETRY_BASE_MS');
+  const stepOutputMaxBytes = read.integer('STEP_OUTPUT_MAX_BYTES', 1_048_576, 1_024, 16_777_216);
+  const executionOutputMaxBytes = read.integer('EXECUTION_OUTPUT_MAX_BYTES', 16_777_216, 1_024, 268_435_456);
+  const workerConcurrency = read.integer('WORKER_CONCURRENCY', 4, 1, 64);
+  const outbox = read.outbox();
+  const neededConnections = 2 * workerConcurrency + outbox.concurrency + SPARE_WORKER_CONNECTIONS;
+  const databasePoolSize = read.integer('DB_POOL_SIZE', neededConnections, 2, 1_000);
+  if (databasePoolSize < neededConnections) {
+    read.problems.push(
+      `DB_POOL_SIZE must be at least ${neededConnections} for WORKER_CONCURRENCY=${workerConcurrency} and OUTBOX_CONCURRENCY=${outbox.concurrency}`,
+    );
+  }
+  if (executionOutputMaxBytes < stepOutputMaxBytes) {
+    read.problems.push('EXECUTION_OUTPUT_MAX_BYTES must not be smaller than STEP_OUTPUT_MAX_BYTES');
+  }
   return read.done({
     nodeEnv: read.nodeEnv(),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
     databaseTimeouts: read.databaseTimeouts(),
-    workerConcurrency: read.integer('WORKER_CONCURRENCY', 4, 1, 64),
+    databasePoolSize,
+    workerConcurrency,
     leaseSeconds: read.integer('WORKER_LEASE_SECONDS', 30, 2, 3_600),
     reaperIntervalMs: read.integer('WORKER_REAPER_INTERVAL_MS', 5_000, 100, 600_000),
     shutdownGraceMs: read.integer('WORKER_SHUTDOWN_GRACE_MS', 25_000, 0, 600_000),
@@ -272,11 +315,14 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
     httpTimeoutMs: read.integer('HTTP_TIMEOUT_MS', 15_000, 100, 120_000),
     httpMaxRedirects: read.integer('HTTP_MAX_REDIRECTS', 5, 0, 10),
     httpMaxResponseBytes: read.integer('HTTP_MAX_RESPONSE_BYTES', 1_048_576, 1_024, 67_108_864),
-    stepOutputMaxBytes: read.integer('STEP_OUTPUT_MAX_BYTES', 1_048_576, 1_024, 16_777_216),
+    stepOutputMaxBytes,
+    executionOutputMaxBytes,
     ssrfAllowlist: read.allowlist('SSRF_ALLOWLIST'),
     tenantMaxConcurrentJobs: read.integer('TENANT_MAX_CONCURRENT_JOBS', 10, 1, 10_000),
+    retentionDays: read.integer('RETENTION_DAYS', 30, 0, 3_650),
+    retentionIntervalMs: read.integer('RETENTION_INTERVAL_MS', 600_000, 100, 86_400_000),
     ...read.observability(),
-    outbox: read.outbox(),
+    outbox,
   });
 }
 

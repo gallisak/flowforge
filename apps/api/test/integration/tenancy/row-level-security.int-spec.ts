@@ -17,7 +17,7 @@ const TENANT_TABLES = [
 ] as const;
 
 function protectedElsewhereTables() {
-  return [{ table: 'tenant_queue_state' }, { table: 'rate_limit_windows' }];
+  return [{ table: 'tenant_queue_state' }, { table: 'rate_limit_windows' }, { table: 'execution_watches' }];
 }
 
 describe('row level security for the application role (queries that bypass the service layer)', () => {
@@ -77,7 +77,7 @@ describe('row level security for the application role (queries that bypass the s
        WHERE n.nspname = 'public' AND c.relkind = 'r'
          AND (c.relrowsecurity OR EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'tenantId' AND NOT a.attisdropped))
        ORDER BY 1`);
-    const protectedElsewhere = ['tenant_queue_state', 'rate_limit_windows'];
+    const protectedElsewhere = ['tenant_queue_state', 'rate_limit_windows', 'execution_watches'];
 
     expect(rows.map((row) => row.table).filter((table) => !protectedElsewhere.includes(table))).toEqual(
       TENANT_TABLES.map(({ table }) => table).sort(),

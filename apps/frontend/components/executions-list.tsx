@@ -17,6 +17,21 @@ import { EXECUTION_STATUSES, ExecutionSummaryDto, WorkflowSummaryDto } from '@/l
 
 export const PAGE_SIZE = 20;
 const ANY = 'any';
+const WORKFLOW_PAGE_SIZE = 200;
+const MAX_WORKFLOW_PAGES = 25;
+
+async function allWorkflows(signal: AbortSignal): Promise<WorkflowSummaryDto[]> {
+  const all: WorkflowSummaryDto[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < MAX_WORKFLOW_PAGES; page++) {
+    const query: string = `/workflows?limit=${WORKFLOW_PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const { data, headers } = await apiRequest<WorkflowSummaryDto[]>(query, { signal });
+    all.push(...data);
+    cursor = headers.get('x-next-cursor');
+    if (!cursor) break;
+  }
+  return all;
+}
 
 export interface ExecutionFilters {
   status?: string;
@@ -41,6 +56,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
   const [failure, setFailure] = useState<ApiError | null>(null);
+  const [failedCursor, setFailedCursor] = useState<string | undefined>(undefined);
   const [workflows, setWorkflows] = useState<WorkflowSummaryDto[]>([]);
   const inFlight = useRef<AbortController | null>(null);
 
@@ -51,6 +67,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
       inFlight.current = controller;
       setPhase(cursor ? 'loading-more' : 'loading');
       setFailure(null);
+      setFailedCursor(undefined);
       try {
         const { data, headers } = await apiRequest<ExecutionSummaryDto[]>(`/executions?${queryOf(filters, cursor)}`, { signal: controller.signal });
         if (controller.signal.aborted) return;
@@ -60,6 +77,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
       } catch (e) {
         if (controller.signal.aborted) return;
         setFailure(e instanceof ApiError ? e : new ApiError(0, ['The API is not reachable']));
+        setFailedCursor(cursor);
         setPhase('error');
       }
     },
@@ -73,10 +91,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
 
   useEffect(() => {
     const controller = new AbortController();
-    apiRequest<WorkflowSummaryDto[]>('/workflows?limit=200', { signal: controller.signal }).then(
-      ({ data }) => setWorkflows(data),
-      () => undefined,
-    );
+    allWorkflows(controller.signal).then(setWorkflows, () => undefined);
     return () => controller.abort();
   }, []);
 
@@ -124,7 +139,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
       </div>
 
       {phase === 'error' && failure && (
-        <ErrorState title="Could not load executions" message={failure.message} status={failure.status} onRetry={() => void load()} />
+        <ErrorState title="Could not load executions" message={failure.message} status={failure.status} onRetry={() => void load(failedCursor)} />
       )}
 
       {phase === 'loading' && (
