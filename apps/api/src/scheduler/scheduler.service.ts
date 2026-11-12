@@ -56,12 +56,11 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
 
   async tick(): Promise<number> {
     const now = new Date();
-    const postponed: string[] = [];
     let fired = 0;
     while (!this.stopped) {
       const current: { schedule?: DueSchedule } = {};
       try {
-        const outcome = await this.db.claimDueSchedule(now, postponed, (schedule, em) => {
+        const outcome = await this.db.claimDueSchedule(now, (schedule, em) => {
           current.schedule = schedule;
           return this.fire(schedule, em, now);
         });
@@ -70,21 +69,32 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
         metrics.scheduledRuns.inc({ outcome: 'started' }, outcome.result);
       } catch (error) {
         if (!current.schedule) throw error;
-        postponed.push(current.schedule.id);
-        metrics.scheduledRuns.inc({ outcome: 'postponed' });
-        this.logger.warn(`workflow ${current.schedule.id}: scheduled run postponed to the next tick (${(error as Error).message})`);
+        const { id, tenantId } = current.schedule;
+        await this.db.run(tenantId, (em) => this.postpone(em, { id, tenantId }, now));
+        this.logger.warn(`workflow ${id}: scheduled run postponed (${(error as Error).message})`);
       }
     }
     return fired;
   }
 
+  private async postpone(em: EntityManager, workflow: Pick<Workflow, 'id' | 'tenantId'>, now: Date, nextRunAt?: Date): Promise<void> {
+    const scheduleRetryAt = new Date(now.getTime() + this.config.schedulerPostponeMs);
+    await em.update(Workflow, workflow, nextRunAt ? { nextRunAt, scheduleRetryAt } : { scheduleRetryAt });
+    metrics.scheduledRuns.inc({ outcome: 'postponed' });
+  }
+
   private async fire(schedule: DueSchedule, em: EntityManager, now: Date): Promise<number> {
+    const workflow = { id: schedule.id, tenantId: schedule.tenantId };
     const plan = planFiring(schedule, schedule.missedRunPolicy, schedule.nextRunAt, now, {
       misfireGraceMs: this.config.schedulerMisfireGraceMs,
       maxCatchUpRuns: this.config.schedulerMaxCatchUpRuns,
     });
-    if (plan.droppedMissedRuns) {
-      this.logger.warn(`workflow ${schedule.id}: only the latest ${this.config.schedulerMaxCatchUpRuns} missed runs were started`);
+    if (plan.skippedRuns > 0) {
+      metrics.scheduledRuns.inc({ outcome: 'skipped' }, plan.skippedRuns);
+      this.logger.warn(
+        `workflow ${schedule.id}: ${plan.skippedRuns}${plan.skippedRunsCapped ? ' or more' : ''} missed runs since ` +
+          `${schedule.nextRunAt.toISOString()} were not started (missed run policy ${schedule.missedRunPolicy})`,
+      );
     }
     let started = 0;
     for (const scheduledAt of plan.fire) {
@@ -97,14 +107,14 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
           cronTriggerKey(schedule.id, scheduledAt),
         );
       } catch (error) {
-        if (!(error instanceof TooManyRequestsException) || started === 0) throw error;
+        if (!(error instanceof TooManyRequestsException)) throw error;
         this.logger.warn(`workflow ${schedule.id}: queue limit reached, ${plan.fire.length - started} scheduled runs postponed`);
-        await em.update(Workflow, { id: schedule.id, tenantId: schedule.tenantId }, { nextRunAt: scheduledAt });
+        await this.postpone(em, workflow, now, scheduledAt);
         return started;
       }
       started++;
     }
-    await em.update(Workflow, { id: schedule.id, tenantId: schedule.tenantId }, { nextRunAt: plan.nextRunAt });
+    await em.update(Workflow, workflow, { nextRunAt: plan.nextRunAt, scheduleRetryAt: null });
     return started;
   }
 }

@@ -1,10 +1,13 @@
+import { createSocket, Socket } from 'dgram';
 import { LookupAddress } from 'dns';
+import { readFile } from 'fs/promises';
 import {
   DestinationNotAllowedError,
   findDestinationError,
   guardedLookup,
   InvalidRequestUrlError,
   isPublicAddress,
+  nonBlockingResolver,
   Resolver,
   ResponseTooLargeError,
   SafeHttpClient,
@@ -194,6 +197,16 @@ describe('SafeHttpClient', () => {
     expect(landed.headers.cookie).toBeUndefined();
   });
 
+  it('drops every header that may carry a key when a redirect leaves the origin', async () => {
+    await send(`${allowed.url}/to/302`, {
+      headers: { 'X-Api-Key': 'partner-secret', 'x-auth-token': 't', 'Idempotency-Key': 'k', 'X-Correlation-Id': 'c', accept: 'application/json' },
+    });
+    const landed = other.requests[other.requests.length - 1];
+    expect(landed.headers['x-api-key']).toBeUndefined();
+    expect(landed.headers['x-auth-token']).toBeUndefined();
+    expect(landed.headers).toMatchObject({ 'idempotency-key': 'k', 'x-correlation-id': 'c', accept: 'application/json' });
+  });
+
   it('keeps credentials on a same-origin redirect', async () => {
     await send(`${allowed.url}/same`, { headers: { authorization: 'Bearer secret' } });
     const landed = allowed.requests[allowed.requests.length - 1];
@@ -238,5 +251,37 @@ describe('SafeHttpClient', () => {
 
   it('returns status and body of an allowed destination', async () => {
     await expect(send(`${allowed.url}/hello`)).resolves.toEqual({ status: 200, body: 'hello' });
+  });
+});
+
+describe('nonBlockingResolver', () => {
+  let silentDns: Socket;
+  let server: string;
+
+  beforeAll(async () => {
+    silentDns = createSocket('udp4');
+    await new Promise<void>((resolve) => silentDns.bind(0, '127.0.0.1', resolve));
+    server = `127.0.0.1:${silentDns.address().port}`;
+  });
+
+  afterAll(() => silentDns.close());
+
+  it('gives up on a name server that does not answer', async () => {
+    const started = Date.now();
+    const error = await nonBlockingResolver(100, [server])('unanswered.example').catch((e: unknown) => e);
+    expect((error as NodeJS.ErrnoException).code).toBe('ETIMEOUT');
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('does not hold the threads that file and crypto work of other tenants need while it waits', async () => {
+    const lookups = Array.from({ length: 8 }, (_, i) => nonBlockingResolver(1_000, [server])(`slow-${i}.example`).catch(() => undefined));
+    const started = Date.now();
+    await Promise.all(Array.from({ length: 4 }, () => readFile(__filename)));
+    expect(Date.now() - started).toBeLessThan(500);
+    await Promise.all(lookups);
+  });
+
+  it('answers localhost without asking a name server, so the guard can refuse it', async () => {
+    await expect(nonBlockingResolver(100, [server])('LOCALHOST.')).resolves.toEqual([{ address: '127.0.0.1', family: 4 }]);
   });
 });

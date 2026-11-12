@@ -1,6 +1,6 @@
 import { BeforeApplicationShutdown, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { IsNull, MoreThan } from 'typeorm';
+import { IsNull, Raw } from 'typeorm';
 import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
@@ -53,6 +53,7 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
   private running = false;
   private loop?: Promise<void>;
   private wake?: () => void;
+  private readonly inFlight = new Set<Promise<void>>();
 
   constructor(
     private readonly db: TenantDb,
@@ -80,21 +81,35 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
     this.running = false;
     this.wake?.();
     await this.loop;
+    await Promise.allSettled([...this.inFlight]);
     await this.client.close();
   }
 
   private async run(): Promise<void> {
-    const { batchSize, leaseSeconds, pollIntervalMs } = this.config.outbox;
+    const { concurrency, tenantConcurrency, leaseSeconds, pollIntervalMs } = this.config.outbox;
     while (this.running) {
+      const free = concurrency - this.inFlight.size;
       let claimed: OutboxEvent[] = [];
-      try {
-        claimed = await this.db.claimOutboxEvents(this.dispatcherId, leaseSeconds, batchSize);
-        await Promise.all(claimed.map((event) => this.deliver(event)));
-      } catch (error) {
-        this.logger.error(`outbox dispatcher error: ${(error as Error).message}`);
+      if (free > 0) {
+        try {
+          claimed = await this.db.claimOutboxEvents(this.dispatcherId, leaseSeconds, free, tenantConcurrency);
+        } catch (error) {
+          this.logger.error(`outbox dispatcher error: ${(error as Error).message}`);
+        }
       }
-      if (claimed.length < batchSize) await this.pause(pollIntervalMs);
+      for (const event of claimed) this.track(event);
+      if (claimed.length === 0 || this.inFlight.size >= concurrency) await this.pause(pollIntervalMs);
     }
+  }
+
+  private track(event: OutboxEvent): void {
+    const delivery = this.deliver(event)
+      .catch((error: Error) => this.logger.error(`outbox delivery error: ${error.message}`))
+      .finally(() => {
+        this.inFlight.delete(delivery);
+        this.wake?.();
+      });
+    this.inFlight.add(delivery);
   }
 
   private pause(ms: number): Promise<void> {
@@ -102,6 +117,7 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
       const timer = setTimeout(resolve, ms);
       this.wake = () => {
         clearTimeout(timer);
+        this.wake = undefined;
         resolve();
       };
     });
@@ -149,11 +165,10 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
     return this.db.run(tenantId, async (em) => {
       const endpoint = await em.findOne(NotificationEndpoint, { where: { tenantId } });
       if (!endpoint) return null;
-      const now = new Date();
       const secrets = await em.find(WebhookSecret, {
         where: [
           { tenantId, purpose: 'outbound', expiresAt: IsNull() },
-          { tenantId, purpose: 'outbound', expiresAt: MoreThan(now) },
+          { tenantId, purpose: 'outbound', expiresAt: Raw((column) => `${column} > now()`) },
         ],
         order: { createdAt: 'DESC' },
       });

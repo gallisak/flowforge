@@ -3,7 +3,11 @@ import { runMigrations } from './db/run-migrations';
 
 async function migrate() {
   const config = loadConfigOrExit(() => loadMigrationConfig());
-  const applied = await runMigrations(config.migrationDatabaseUrl);
+  const applied = await runMigrations(config.migrationDatabaseUrl, {
+    connectTimeoutMs: config.connectTimeoutMs,
+    statementTimeoutMs: config.statementTimeoutMs,
+    lockTimeoutMs: config.lockTimeoutMs,
+  });
   console.log(applied.length > 0 ? `applied migrations: ${applied.join(', ')}` : 'database schema is up to date');
 }
 

@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import ExecutionPage from '@/app/executions/[id]/page';
+import { ExecutionView } from '@/components/execution-view';
 import { RECONNECT_MAX_MS, RECONNECT_MIN_MS } from '@/lib/use-execution-stream';
 import { FakeEventSource } from './fake-event-source';
 
@@ -34,7 +34,7 @@ describe('execution page after the stream is refused', () => {
   });
 
   it('reconnects once the API is back after it refused a reconnection', async () => {
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    render(<ExecutionView id="exec-1" />);
     await advance(0);
     act(() => latest().emit('snapshot', running));
 
@@ -52,7 +52,7 @@ describe('execution page after the stream is refused', () => {
   });
 
   it('waits longer after every refused attempt up to a ceiling', async () => {
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    render(<ExecutionView id="exec-1" />);
     await advance(0);
 
     const waits: number[] = [];
@@ -72,7 +72,7 @@ describe('execution page after the stream is refused', () => {
   });
 
   it('starts from the shortest wait again after a successful reconnection', async () => {
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    render(<ExecutionView id="exec-1" />);
     await advance(0);
     await refuseLatest();
     await advance(RECONNECT_MIN_MS);
@@ -92,7 +92,7 @@ describe('execution page after the stream is refused', () => {
     [401, /api key/i],
   ])('gives up for good when the execution answers %s', async (status, message) => {
     respond(status);
-    render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    render(<ExecutionView id="exec-1" />);
     await advance(0);
 
     await refuseLatest();
@@ -104,7 +104,7 @@ describe('execution page after the stream is refused', () => {
   });
 
   it('leaves nothing behind when the page closes while waiting to reconnect', async () => {
-    const page = render(<ExecutionPage params={{ id: 'exec-1' }} />);
+    const page = render(<ExecutionView id="exec-1" />);
     await advance(0);
     await refuseLatest();
 

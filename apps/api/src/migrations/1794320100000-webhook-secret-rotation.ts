@@ -31,8 +31,9 @@ export class WebhookSecretRotation1794320100000 implements MigrationInterface {
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`ALTER TABLE "tenants" ADD "webhookSecret" character varying`);
     await queryRunner.query(`
-      UPDATE "tenants" t SET "webhookSecret" = (
-        SELECT s."secret" FROM "webhook_secrets" s WHERE s."tenantId" = t."id" ORDER BY s."createdAt" DESC LIMIT 1
+      UPDATE "tenants" t SET "webhookSecret" = COALESCE(
+        (SELECT s."secret" FROM "webhook_secrets" s WHERE s."tenantId" = t."id" ORDER BY s."createdAt" DESC LIMIT 1),
+        'whsec_' || encode(sha256((gen_random_uuid()::text || gen_random_uuid()::text)::bytea), 'base64')
       )
     `);
     await queryRunner.query(`ALTER TABLE "tenants" ALTER COLUMN "webhookSecret" SET NOT NULL`);

@@ -3,5 +3,6 @@ dist/
 .next/
 *.log
 .env
+.env.local
 *.tsbuildinfo
 next-env.d.ts

@@ -54,7 +54,7 @@ export function WorkflowForm({ workflow, timezones }: { workflow?: WorkflowDto; 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const { errors: found, payload } = validateWorkflow(values, zones);
+    const { errors: found, payload } = validateWorkflow(values, workflow);
     setErrors(found);
     if (!payload) return;
     setSubmitting(true);

@@ -27,6 +27,8 @@ function invalid(message: string): never {
   throw new BadRequestException(message);
 }
 
+const SENDABLE_HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/;
+
 function validateHttpStep(step: Record<string, unknown>, at: string): void {
   if (typeof step.url !== 'string') invalid(`${at}.url is required`);
   if (step.url.length > STEP_LIMITS.urlLength) invalid(`${at}.url must be at most ${STEP_LIMITS.urlLength} characters`);
@@ -40,11 +42,16 @@ function validateHttpStep(step: Record<string, unknown>, at: string): void {
     if (!isPlainObject(step.headers)) invalid(`${at}.headers must be an object`);
     const entries = Object.entries(step.headers);
     if (entries.length > STEP_LIMITS.headers) invalid(`${at}.headers must have at most ${STEP_LIMITS.headers} entries`);
+    const names = new Set<string>();
     for (const [name, value] of entries) {
+      if (names.has(name.toLowerCase())) invalid(`${at}.headers sets ${name.toLowerCase()} twice`);
+      names.add(name.toLowerCase());
       if (!HEADER_NAME.test(name) || name.length > STEP_LIMITS.headerNameLength) invalid(`${at}.headers has an invalid name`);
       if (FORBIDDEN_HEADERS.has(name.toLowerCase())) invalid(`${at}.headers must not set ${name.toLowerCase()}`);
-      if (typeof value !== 'string' || value.length > STEP_LIMITS.headerValueLength || /[\r\n]/.test(value)) {
-        invalid(`${at}.headers.${name} must be a single-line string of at most ${STEP_LIMITS.headerValueLength} characters`);
+      if (typeof value !== 'string' || value.length > STEP_LIMITS.headerValueLength || !SENDABLE_HEADER_VALUE.test(value)) {
+        invalid(
+          `${at}.headers.${name} must be a single-line string of at most ${STEP_LIMITS.headerValueLength} characters without control or non-Latin-1 characters`,
+        );
       }
     }
   }

@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { QUEUE_LIMITS, QueueLimits } from '../config/config';
@@ -9,6 +9,28 @@ import { TooManyRequestsException } from '../limits/too-many-requests';
 import { currentCorrelationId } from '../observability/log-context';
 
 const QUEUE_FULL_RETRY_AFTER_SECONDS = 30;
+const SUMMARY_COLUMNS = [
+  'id',
+  'tenantId',
+  'workflowId',
+  'workflowVersion',
+  'status',
+  'error',
+  'trigger',
+  'triggerKey',
+  'correlationId',
+  'createdAt',
+  'finishedAt',
+] as const;
+
+export type ExecutionSummary = Pick<Execution, (typeof SUMMARY_COLUMNS)[number]>;
+export const OUTPUT_PREVIEW_MAX_BYTES = 8 * 1024;
+export type StepRunDetail = StepRun & { outputTruncated: boolean };
+export type ExecutionDetail = Execution & { outputTruncated: boolean; steps: StepRunDetail[] };
+
+function previewOf(alias: string): string {
+  return `CASE WHEN ${alias}."outputBytes" <= $3 THEN ${alias}."output" END AS "output", COALESCE(${alias}."outputBytes" > $3, false) AS "outputTruncated"`;
+}
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 
@@ -20,12 +42,14 @@ export interface ExecutionListFilter {
 }
 
 export interface ExecutionPage {
-  items: Execution[];
+  items: ExecutionSummary[];
   nextCursor: string | null;
 }
 
 @Injectable()
 export class ExecutionsService {
+  private readonly logger = new Logger(ExecutionsService.name);
+
   constructor(
     private readonly db: TenantDb,
     @Inject(QUEUE_LIMITS) private readonly limits: QueueLimits,
@@ -59,7 +83,8 @@ export class ExecutionsService {
     const tenant = await em.findOneOrFail(Tenant, { where: { id: workflow.tenantId } });
     const maxQueued = tenant.maxQueuedJobs ?? this.limits.tenantMaxQueuedJobs;
     const [{ queued }]: Array<{ queued: number }> = await em.query(
-      `SELECT count(*)::int AS queued FROM (SELECT 1 FROM "jobs" WHERE "tenantId" = $1 AND "status" = 'queued' LIMIT $2) q`,
+      `SELECT count(*)::int AS queued
+         FROM (SELECT 1 FROM "jobs" WHERE "tenantId" = $1 AND "status" = 'queued' AND "runAt" <= now() LIMIT $2) q`,
       [workflow.tenantId, maxQueued],
     );
     if (queued >= maxQueued) {
@@ -87,7 +112,8 @@ export class ExecutionsService {
       if (!triggerKey) throw new Error('the execution was not inserted');
       return em.findOneOrFail(Execution, { where: { tenantId: workflow.tenantId, triggerKey } });
     }
-    await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: id }));
+    await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: id, maxAttempts: this.limits.jobMaxAttempts }));
+    this.logger.log({ msg: 'execution created', executionId: id, workflowId: workflow.id, tenantId: workflow.tenantId, trigger });
     return em.findOneOrFail(Execution, { where: { id } });
   }
 
@@ -97,6 +123,7 @@ export class ExecutionsService {
     return this.db.run(tenantId, async (em) => {
       const query = em
         .createQueryBuilder(Execution, 'e')
+        .select(SUMMARY_COLUMNS.map((column) => `e.${column}`))
         .addSelect('e."createdAt"::text', 'cursor_created_at')
         .where('e."tenantId" = :tenantId', { tenantId })
         .orderBy('e."createdAt"', 'DESC')
@@ -119,15 +146,45 @@ export class ExecutionsService {
     });
   }
 
-  get(tenantId: string, id: string): Promise<Execution & { steps: StepRun[] }> {
+  get(tenantId: string, id: string): Promise<ExecutionDetail> {
     return this.db.run(tenantId, async (em) => {
-      const execution = await em.findOne(Execution, { where: { id, tenantId } });
+      const [execution]: Array<Omit<ExecutionDetail, 'steps'>> = await em.query(
+        `SELECT e."id", e."tenantId", e."workflowId", e."workflowVersion", e."status", e."input", ${previewOf('e')},
+                e."error", e."trigger", e."triggerKey", e."correlationId", e."createdAt", e."finishedAt"
+           FROM "executions" e
+          WHERE e."id" = $1 AND e."tenantId" = $2`,
+        [id, tenantId, OUTPUT_PREVIEW_MAX_BYTES],
+      );
       if (!execution) throw new NotFoundException('Execution not found');
-      const steps = await em.find(StepRun, {
-        where: { executionId: id },
-        order: { stepIndex: 'ASC', startedAt: 'ASC' },
-      });
+      const steps: StepRunDetail[] = await em.query(
+        `SELECT s."id", s."tenantId", s."executionId", s."stepIndex", s."stepId", s."status", s."attempts", s."idempotencyKey",
+                ${previewOf('s')}, s."error", s."startedAt", s."wakeAt", s."finishedAt"
+           FROM "step_runs" s
+          WHERE s."executionId" = $1 AND s."tenantId" = $2
+          ORDER BY s."stepIndex" ASC, s."startedAt" ASC`,
+        [id, tenantId, OUTPUT_PREVIEW_MAX_BYTES],
+      );
       return { ...execution, steps };
+    });
+  }
+
+  watch(tenantId: string, id: string, seconds: number): Promise<void> {
+    return this.db.run(tenantId, async (em) => {
+      await em.query('SELECT watch_execution($1, $2)', [id, seconds]);
+    });
+  }
+
+  outputOf(tenantId: string, id: string, stepIndex?: number): Promise<string> {
+    return this.db.run(tenantId, async (em) => {
+      const rows: Array<{ output: string | null }> =
+        stepIndex === undefined
+          ? await em.query(`SELECT "output"::text AS "output" FROM "executions" WHERE "id" = $1 AND "tenantId" = $2`, [id, tenantId])
+          : await em.query(
+              `SELECT "output"::text AS "output" FROM "step_runs" WHERE "executionId" = $1 AND "tenantId" = $2 AND "stepIndex" = $3`,
+              [id, tenantId, stepIndex],
+            );
+      if (rows.length === 0) throw new NotFoundException(stepIndex === undefined ? 'Execution not found' : 'Step run not found');
+      return rows[0].output ?? 'null';
     });
   }
 }

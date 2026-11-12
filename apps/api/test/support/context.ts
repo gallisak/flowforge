@@ -1,5 +1,6 @@
 import { DataSource } from 'typeorm';
 import { createTestDatabase, openDataSource, TestDatabase } from './db';
+import { closeOpenResources } from './open-resources';
 
 export interface IntegrationContext {
   readonly db: TestDatabase;
@@ -19,6 +20,7 @@ export function useIntegrationContext(): IntegrationContext {
   });
 
   afterAll(async () => {
+    await closeOpenResources();
     for (const cleanup of teardowns.reverse()) await cleanup();
     await ds?.destroy();
     await db?.drop();

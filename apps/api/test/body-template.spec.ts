@@ -10,8 +10,8 @@ describe('bodyFormatOf', () => {
     ['a=1', { 'Content-Type': 'application/json; charset=utf-8' }, 'json'],
     ['a=1', { 'content-type': 'application/vnd.api+json' }, 'json'],
     ['{"a":1}', { 'content-type': 'application/x-www-form-urlencoded' }, 'form'],
-    ['{"a":1}', { 'content-type': 'text/plain' }, 'text'],
-    ['{"a":1}', { 'content-type': 'application/jsonp' }, 'text'],
+    ['{"a":1}', { 'content-type': 'text/plain' }, 'json'],
+    ['{"a":1}', { 'content-type': 'application/jsonp' }, 'json'],
   ])('treats %j with headers %j as %s', (template, headers, expected) => {
     expect(bodyFormatOf(template, headers as Record<string, string>)).toBe(expected);
   });

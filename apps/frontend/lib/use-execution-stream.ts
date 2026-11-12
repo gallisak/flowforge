@@ -23,6 +23,8 @@ async function describeFailure(id: string, signal: AbortSignal): Promise<StreamF
     const res = await fetch(`/api/proxy/executions/${id}`, { signal, cache: 'no-store' });
     if (res.status === 404) return { permanent: true, message: 'Execution not found' };
     if (res.status === 401) return { permanent: true, message: 'Your API key is missing or no longer valid' };
+    if (res.status === 400) return { permanent: true, message: 'This is not a valid execution id' };
+    if (res.status === 403) return { permanent: true, message: 'This request is not allowed' };
     if (res.ok) return { permanent: false, message: 'The live connection was refused' };
     return { permanent: false, message: `Could not load the execution (HTTP ${res.status})` };
   } catch {

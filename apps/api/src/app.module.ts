@@ -4,10 +4,12 @@ import { ApiKeyGuard } from './auth/api-key.guard';
 import { API_CONFIG, ApiConfig, SCHEDULER_CONFIG, SchedulerConfig, WORKER_CONFIG, WorkerConfig } from './config/config';
 import { ApiConfigModule, SchedulerConfigModule, WorkerConfigModule } from './config/config.module';
 import { dataSourceOptions, entities } from './db/data-source';
+import { DatabaseRoleCheck } from './db/database-role-check';
 import { TenantDb } from './db/tenant-db.service';
 import { JobQueueService } from './engine/job-queue.service';
 import { JobRunnerService } from './engine/job-runner.service';
 import { OutboxDispatcher } from './outbox/outbox-dispatcher.service';
+import { RetentionService } from './retention/retention.service';
 import { StepExecutor } from './engine/step-executor';
 import { ExecutionsController } from './executions/executions.controller';
 import { ExecutionEventsHub } from './executions/execution-events.hub';
@@ -15,6 +17,7 @@ import { ExecutionStreamService } from './executions/execution-stream.service';
 import { ExecutionsService } from './executions/executions.service';
 import { SchedulerService } from './scheduler/scheduler.service';
 import { TenantsController } from './tenants/tenants.controller';
+import { AuthFailureLimiter } from './limits/auth-failure-limiter';
 import { RateLimitService } from './limits/rate-limit.service';
 import { WebhookSecretsController } from './webhooks/webhook-secrets.controller';
 import { WebhookSecretsService } from './webhooks/webhook-secrets.service';
@@ -29,7 +32,7 @@ import { WorkflowsService } from './workflows/workflows.service';
     ApiConfigModule,
     TypeOrmModule.forRootAsync({
       inject: [API_CONFIG],
-      useFactory: (config: ApiConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts),
+      useFactory: (config: ApiConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts, config.databasePoolSize),
     }),
     TypeOrmModule.forFeature(entities),
   ],
@@ -42,12 +45,14 @@ import { WorkflowsService } from './workflows/workflows.service';
     NotificationsController,
   ],
   providers: [
+    DatabaseRoleCheck,
     TenantDb,
     ApiKeyGuard,
     WorkflowsService,
     ExecutionsService,
     WebhookSecretsService,
     RateLimitService,
+    AuthFailureLimiter,
     NotificationsService,
     ExecutionEventsHub,
     ExecutionStreamService,
@@ -60,11 +65,11 @@ export class AppModule {}
     WorkerConfigModule,
     TypeOrmModule.forRootAsync({
       inject: [WORKER_CONFIG],
-      useFactory: (config: WorkerConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts),
+      useFactory: (config: WorkerConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts, config.databasePoolSize),
     }),
     TypeOrmModule.forFeature(entities),
   ],
-  providers: [TenantDb, JobQueueService, JobRunnerService, StepExecutor, OutboxDispatcher],
+  providers: [DatabaseRoleCheck, TenantDb, JobQueueService, JobRunnerService, StepExecutor, OutboxDispatcher, RetentionService],
 })
 export class WorkerModule {}
 
@@ -73,10 +78,10 @@ export class WorkerModule {}
     SchedulerConfigModule,
     TypeOrmModule.forRootAsync({
       inject: [SCHEDULER_CONFIG],
-      useFactory: (config: SchedulerConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts),
+      useFactory: (config: SchedulerConfig) => dataSourceOptions(config.databaseUrl, config.databaseTimeouts, config.databasePoolSize),
     }),
     TypeOrmModule.forFeature(entities),
   ],
-  providers: [TenantDb, ExecutionsService, SchedulerService],
+  providers: [DatabaseRoleCheck, TenantDb, ExecutionsService, SchedulerService],
 })
 export class SchedulerModule {}

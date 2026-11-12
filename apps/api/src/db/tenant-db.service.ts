@@ -34,6 +34,12 @@ export interface ReapedJob {
   attempts: number;
 }
 
+export interface PurgedRows {
+  executions: number;
+  outboxEvents: number;
+  workflowVersions: number;
+}
+
 @Injectable()
 export class TenantDb {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
@@ -63,15 +69,18 @@ export class TenantDb {
 
   claimDueSchedule<T>(
     now: Date,
-    skip: readonly string[],
     work: (schedule: DueSchedule, manager: EntityManager) => Promise<T>,
   ): Promise<{ claimed: false } | { claimed: true; result: T }> {
     return this.dataSource.transaction(async (manager) => {
-      const [schedule]: DueSchedule[] = await manager.query('SELECT * FROM claim_due_schedule($1, $2::uuid[])', [now, skip]);
+      const [schedule]: DueSchedule[] = await manager.query('SELECT * FROM claim_due_schedule($1)', [now]);
       if (!schedule) return { claimed: false };
       await manager.query(`SELECT set_config('app.tenant_id', $1, true)`, [schedule.tenantId]);
       return { claimed: true, result: await work(schedule, manager) };
     });
+  }
+
+  setTenantLimits<T>(tenantId: string, changes: Record<string, number | null | undefined>): Promise<T[]> {
+    return this.dataSource.query('SELECT * FROM set_tenant_limits($1, $2::jsonb)', [tenantId, JSON.stringify(changes)]);
   }
 
   async hitRateLimit(tenantId: string, defaultLimit: number): Promise<RateLimitHit> {
@@ -79,12 +88,17 @@ export class TenantDb {
     return row;
   }
 
-  reapExpiredJobs(): Promise<ReapedJob[]> {
-    return this.dataSource.query('SELECT * FROM reap_expired_jobs()');
+  reapExpiredJobs(retryBaseMs = 1_000, retryCapMs = 300_000): Promise<ReapedJob[]> {
+    return this.dataSource.query('SELECT * FROM reap_expired_jobs($1, $2)', [retryBaseMs, retryCapMs]);
   }
 
-  claimOutboxEvents(dispatcherId: string, leaseSeconds: number, limit: number): Promise<OutboxEvent[]> {
-    return this.dataSource.query('SELECT * FROM claim_outbox_events($1, $2, $3)', [dispatcherId, leaseSeconds, limit]);
+  async purgeFinishedData(retentionDays: number, batch: number): Promise<PurgedRows> {
+    const [row]: PurgedRows[] = await this.dataSource.query('SELECT * FROM purge_finished_data(make_interval(days => $1), $2)', [retentionDays, batch]);
+    return row;
+  }
+
+  claimOutboxEvents(dispatcherId: string, leaseSeconds: number, limit: number, perTenant: number): Promise<OutboxEvent[]> {
+    return this.dataSource.query('SELECT * FROM claim_outbox_events($1, $2, $3, $4)', [dispatcherId, leaseSeconds, limit, perTenant]);
   }
 
   async claimJob(workerId: string, leaseSeconds: number, defaultMaxRunning: number): Promise<Job | null> {

@@ -1,9 +1,27 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, IsString, Max, Min, MaxLength } from 'class-validator';
+import { Response } from 'express';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentTenant } from '../auth/current-tenant.decorator';
 import { AuthenticatedTenant } from '../db/tenant-db.service';
 import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
+import { NEXT_CURSOR_HEADER } from '../executions/executions.controller';
 import { WorkflowsService } from './workflows.service';
+
+export class ListWorkflowsQuery {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(512)
+  cursor?: string;
+}
 
 @Controller('workflows')
 @UseGuards(ApiKeyGuard)
@@ -11,8 +29,11 @@ export class WorkflowsController {
   constructor(private readonly workflows: WorkflowsService) {}
 
   @Get()
-  list(@CurrentTenant() t: AuthenticatedTenant) {
-    return this.workflows.list(t.id);
+  async list(@CurrentTenant() t: AuthenticatedTenant, @Query() query: ListWorkflowsQuery, @Res({ passthrough: true }) res: Response) {
+    const page = await this.workflows.list(t.id, query);
+    res.setHeader('access-control-expose-headers', NEXT_CURSOR_HEADER);
+    if (page.nextCursor) res.setHeader(NEXT_CURSOR_HEADER, page.nextCursor);
+    return page.items;
   }
 
   @Get(':id')

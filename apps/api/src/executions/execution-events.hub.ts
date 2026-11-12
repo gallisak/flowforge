@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { Client } from 'pg';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { EXECUTION_EVENTS_CHANNEL } from '../migrations/1794320900000-execution-change-notifications';
@@ -7,26 +7,33 @@ type Listener = () => void;
 
 const RECONNECT_MIN_MS = 500;
 const RECONNECT_MAX_MS = 30_000;
+const KEEPALIVE_DELAY_MS = 10_000;
 
 @Injectable()
-export class ExecutionEventsHub implements OnModuleInit, OnApplicationShutdown {
+export class ExecutionEventsHub implements OnApplicationBootstrap, OnApplicationShutdown {
   private readonly logger = new Logger(ExecutionEventsHub.name);
   private readonly listeners = new Map<string, Set<Listener>>();
   private client?: Client;
   private reconnectTimer?: NodeJS.Timeout;
+  private pingTimer?: NodeJS.Timeout;
   private reconnectDelayMs = RECONNECT_MIN_MS;
   private stopped = false;
 
   constructor(@Inject(API_CONFIG) private readonly config: ApiConfig) {}
 
-  onModuleInit(): void {
+  onApplicationBootstrap(): void {
     void this.connect();
   }
 
   async onApplicationShutdown(): Promise<void> {
     this.stopped = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    clearTimeout(this.pingTimer);
     await this.client?.end().catch(() => undefined);
+  }
+
+  get isListening(): boolean {
+    return this.client !== undefined;
   }
 
   get subscriberCount(): number {
@@ -58,7 +65,9 @@ export class ExecutionEventsHub implements OnModuleInit, OnApplicationShutdown {
     const client = new Client({
       connectionString: this.config.databaseUrl,
       connectionTimeoutMillis: this.config.databaseTimeouts.connectTimeoutMs,
+      query_timeout: this.config.databaseTimeouts.connectTimeoutMs,
       keepAlive: true,
+      keepAliveInitialDelayMillis: KEEPALIVE_DELAY_MS,
     });
     client.on('notification', (message) => {
       if (message.channel === EXECUTION_EVENTS_CHANNEL && message.payload) this.notify(message.payload);
@@ -70,14 +79,27 @@ export class ExecutionEventsHub implements OnModuleInit, OnApplicationShutdown {
       await client.query(`LISTEN ${EXECUTION_EVENTS_CHANNEL}`);
       this.client = client;
       this.reconnectDelayMs = RECONNECT_MIN_MS;
+      this.schedulePing(client);
       this.notifyEveryone();
     } catch (error) {
       this.reconnect(client, error as Error);
     }
   }
 
+  private schedulePing(client: Client): void {
+    this.pingTimer = setTimeout(() => {
+      client.query('SELECT 1').then(
+        () => {
+          if (this.client === client && !this.stopped) this.schedulePing(client);
+        },
+        (error: Error) => this.reconnect(client, error),
+      );
+    }, this.config.executionEventsPingMs);
+  }
+
   private reconnect(client: Client, error?: Error): void {
     if (this.stopped || this.reconnectTimer || (this.client && this.client !== client)) return;
+    clearTimeout(this.pingTimer);
     if (error) this.logger.warn(`execution event listener lost its connection: ${error.message}`);
     this.client = undefined;
     client.removeAllListeners();

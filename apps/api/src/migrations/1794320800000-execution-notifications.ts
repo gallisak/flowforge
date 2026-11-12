@@ -2,9 +2,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 export const NOTIFICATION_OUTPUT_MAX_BYTES = 65_536;
 
-const REAPER_RESULT = `("id" uuid, "tenantId" uuid, "executionId" uuid, "status" character varying, "attempts" integer)`;
+export const REAPER_RESULT = `("id" uuid, "tenantId" uuid, "executionId" uuid, "status" character varying, "attempts" integer)`;
 
-const EXPIRE_JOBS = `
+export const EXPIRE_JOBS = `
   WITH expired AS (
     SELECT q."id"
       FROM "jobs" q
@@ -233,6 +233,7 @@ export class ExecutionNotifications1794320800000 implements MigrationInterface {
     await queryRunner.query(`DROP FUNCTION record_execution_event(uuid)`);
     await queryRunner.query(`DROP TABLE "outbox_events"`);
     await queryRunner.query(`DROP TABLE "notification_endpoints"`);
+    await queryRunner.query(`DELETE FROM "webhook_secrets" WHERE "purpose" = 'outbound'`);
     await queryRunner.query(`ALTER TABLE "webhook_secrets" DROP COLUMN "purpose"`);
     await queryRunner.query(`ALTER TABLE "executions" DROP COLUMN "correlationId"`);
   }

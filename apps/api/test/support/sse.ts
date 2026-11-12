@@ -1,4 +1,4 @@
-import { request } from 'http';
+import { IncomingHttpHeaders, request } from 'http';
 
 export interface ServerSentEvent {
   event: string;
@@ -7,6 +7,7 @@ export interface ServerSentEvent {
 
 export interface EventStream {
   readonly status: number;
+  readonly headers: IncomingHttpHeaders;
   readonly body: string;
   readonly events: ServerSentEvent[];
   readonly ended: Promise<void>;
@@ -42,6 +43,7 @@ export function openEventStream(url: string, headers: Record<string, string>): P
       res.on('close', markEnded);
       resolve({
         status: res.statusCode ?? 0,
+        headers: res.headers,
         get body() {
           return body;
         },

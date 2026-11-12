@@ -4,7 +4,7 @@ import { DELETE, GET, POST } from '@/app/api/proxy/[...path]/route';
 import { MAX_PROXY_BODY_BYTES } from '@/lib/request-body';
 
 const ORIGIN = 'http://localhost:3001';
-const context = (...path: string[]) => ({ params: { path } });
+const context = (...path: string[]) => ({ params: Promise.resolve({ path }) });
 
 function make(url: string, init: { method?: string; key?: string | null; origin?: string | null; body?: string } = {}) {
   const headers = new Headers({ host: 'localhost:3001' });

@@ -1,8 +1,10 @@
 import { randomBytes } from 'crypto';
+import { createServer, Socket } from 'net';
+import { AddressInfo } from 'net';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { dataSourceOptions } from '../../../src/db/data-source';
-import { runMigrations } from '../../../src/db/run-migrations';
+import { DEFAULT_MIGRATION_TIMEOUTS, runMigrations } from '../../../src/db/run-migrations';
 import { migrations } from '../../../src/migrations';
 import { useIntegrationContext } from '../../support/context';
 import { DB_ROLES, EMPTY_TEMPLATE_DB, withCredentials, withDatabase } from '../../support/schema';
@@ -53,6 +55,35 @@ describe('database migrations', () => {
     } finally {
       await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
       await admin.end();
+    }
+  });
+
+  it('give up on a database server that accepts the connection but never answers', async () => {
+    const sockets = new Set<Socket>();
+    const silent = createServer((socket) => sockets.add(socket));
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', resolve));
+    const { port } = silent.address() as AddressInfo;
+    try {
+      const started = Date.now();
+      await expect(
+        runMigrations(`postgres://flowforge_owner:secret@127.0.0.1:${port}/flowforge`, { ...DEFAULT_MIGRATION_TIMEOUTS, connectTimeoutMs: 300 }),
+      ).rejects.toThrow();
+      expect(Date.now() - started).toBeLessThan(3_000);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => silent.close(() => resolve()));
+    }
+  }, 10_000);
+
+  it('run with a lock timeout so that a blocked DDL statement does not queue every other query behind it', async () => {
+    const ds = await new DataSource(dataSourceOptions(ctx.db.ownerUrl, DEFAULT_MIGRATION_TIMEOUTS)).initialize();
+    try {
+      const [lock] = await ds.query('SHOW lock_timeout');
+      const [statement] = await ds.query('SHOW statement_timeout');
+      expect(lock.lock_timeout).toBe('5s');
+      expect(statement.statement_timeout).toBe('10min');
+    } finally {
+      await ds.destroy();
     }
   });
 });

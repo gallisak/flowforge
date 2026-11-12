@@ -53,7 +53,7 @@ export const metrics = {
   }),
   scheduledRuns: new Counter({
     name: 'flowforge_scheduled_runs_total',
-    help: 'Scheduled runs started or postponed by the scheduler',
+    help: 'Scheduled runs started, postponed because the tenant queue was full, or skipped by the missed run policy',
     labelNames: ['outcome'],
     registers: [registry],
   }),
@@ -71,7 +71,7 @@ export function registerDatabaseGauges(dataSource: DataSource, topTenants: numbe
   for (const name of [QUEUE_DEPTH, OUTBOX_BACKLOG]) registry.removeSingleMetric(name);
   new Gauge({
     name: QUEUE_DEPTH,
-    help: `Jobs waiting or running per tenant; tenants beyond the ${topTenants} largest are summed as "other"`,
+    help: `Jobs per tenant: queued (ready to run), delayed (waiting for a timer or a retry) and running; tenants beyond the ${topTenants} largest are summed as "other"`,
     labelNames: ['tenant_id', 'status'],
     registers: [registry],
     async collect() {

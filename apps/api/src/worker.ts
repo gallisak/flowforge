@@ -2,8 +2,9 @@ import { NestFactory } from '@nestjs/core';
 import { WorkerModule } from './app.module';
 import { loadConfigOrExit, loadWorkerConfig } from './config/config';
 import { JobRunnerService } from './engine/job-runner.service';
-import { startOps, useStructuredLogs } from './observability/bootstrap';
+import { runService, startOps, useStructuredLogs } from './observability/bootstrap';
 import { OutboxDispatcher } from './outbox/outbox-dispatcher.service';
+import { RetentionService } from './retention/retention.service';
 
 async function bootstrap() {
   const config = loadConfigOrExit(() => loadWorkerConfig());
@@ -14,6 +15,7 @@ async function bootstrap() {
   const dispatcher = app.get(OutboxDispatcher);
   runner.start(config.workerConcurrency);
   dispatcher.start();
+  app.get(RetentionService).start();
   await startOps(app, config, () => runner.isRunning && dispatcher.isRunning);
 }
-bootstrap();
+runService('worker', bootstrap);

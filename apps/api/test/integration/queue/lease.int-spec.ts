@@ -1,6 +1,8 @@
 import { JobQueueService } from '../../../src/engine/job-queue.service';
+import { JobRunnerService } from '../../../src/engine/job-runner.service';
 import { Execution, Job } from '../../../src/entities';
 import { useIntegrationContext } from '../../support/context';
+import { settledCalls } from '../../support/spies';
 import { seedTenant, seedWorkflow } from '../../support/db';
 import { eventually } from '../../support/eventually';
 import { Receiver, startReceiver } from '../../support/receiver';
@@ -79,6 +81,8 @@ describe('job lease', () => {
 
   it('cannot be used to complete a job after it was taken over by someone else', async () => {
     const { execution, job } = await enqueueSlowJob('/taken-over');
+    const processed = jest.spyOn(JobRunnerService.prototype, 'process');
+    ctx.onTeardown(() => processed.mockRestore());
 
     workers = await startInProcessWorkers(1);
     await eventually(() => expect(receiver.requests.some((r) => r.path === '/taken-over')).toBe(true));
@@ -86,7 +90,7 @@ describe('job lease', () => {
       .getRepository(Job)
       .update(job.id, { lockedBy: 'another-worker', lockedUntil: new Date(Date.now() + 3_600_000) });
 
-    await new Promise((resolve) => setTimeout(resolve, SLOW_STEP_MS + 1_000));
+    await settledCalls(processed);
 
     expect(await ctx.ds.getRepository(Job).findOneByOrFail({ id: job.id })).toMatchObject({
       status: 'running',

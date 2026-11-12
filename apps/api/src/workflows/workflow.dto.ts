@@ -1,9 +1,12 @@
-import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, ValidateIf } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsBoolean, IsIn, IsOptional, IsString, Length, Matches, ValidateIf } from 'class-validator';
 import { MISSED_RUN_POLICIES, MissedRunPolicy } from '../scheduler/cron-schedule';
+
+const isPresent = (_dto: object, value: unknown) => value !== undefined;
 
 export class CreateWorkflowDto {
   @IsString()
   @Length(1, 200)
+  @Matches(/\S/, { message: 'name must not be blank' })
   name: string;
 
   @IsArray()
@@ -29,12 +32,13 @@ export class CreateWorkflowDto {
 }
 
 export class UpdateWorkflowDto {
-  @IsOptional()
+  @ValidateIf(isPresent)
   @IsString()
   @Length(1, 200)
+  @Matches(/\S/, { message: 'name must not be blank' })
   name?: string;
 
-  @IsOptional()
+  @ValidateIf(isPresent)
   @IsArray()
   @ArrayNotEmpty()
   steps?: unknown[];
@@ -44,15 +48,15 @@ export class UpdateWorkflowDto {
   @IsString()
   cron?: string | null;
 
-  @IsOptional()
+  @ValidateIf(isPresent)
   @IsString()
   timezone?: string;
 
-  @IsOptional()
+  @ValidateIf(isPresent)
   @IsBoolean()
   enabled?: boolean;
 
-  @IsOptional()
+  @ValidateIf(isPresent)
   @IsIn(MISSED_RUN_POLICIES)
   missedRunPolicy?: MissedRunPolicy;
 }

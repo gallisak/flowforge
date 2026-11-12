@@ -1,10 +1,26 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { CurrentTenant } from '../auth/current-tenant.decorator';
 import { AuthenticatedTenant } from '../db/tenant-db.service';
+import { OUTBOX_EVENT_STATUSES, OutboxEventStatus } from '../entities';
 import { WebhookSecretsService } from '../webhooks/webhook-secrets.service';
 import { NotificationEndpointDto } from './notification-endpoint.dto';
 import { NotificationsService } from './notifications.service';
+
+export class ListNotificationEventsQuery {
+  @IsOptional()
+  @IsIn(OUTBOX_EVENT_STATUSES)
+  status?: OutboxEventStatus;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number;
+}
 
 @Controller('notifications')
 @UseGuards(ApiKeyGuard)
@@ -28,6 +44,11 @@ export class NotificationsController {
   @HttpCode(204)
   removeEndpoint(@CurrentTenant() t: AuthenticatedTenant) {
     return this.notifications.remove(t.id);
+  }
+
+  @Get('events')
+  listEvents(@CurrentTenant() t: AuthenticatedTenant, @Query() query: ListNotificationEventsQuery) {
+    return this.notifications.events(t.id, query);
   }
 
   @Get('secrets')

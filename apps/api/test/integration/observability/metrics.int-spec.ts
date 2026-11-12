@@ -120,7 +120,7 @@ describe('metrics and health endpoints', () => {
     expect(await histogramCount('flowforge_step_duration_seconds', { type: 'http', outcome: 'failed' })).toBe(before.failedSteps + 3);
   });
 
-  it('reports the queue depth of the largest tenants and sums the rest', async () => {
+  it('reports the queue depth of the largest tenants and sums the rest, counting jobs that wait for a timer as delayed', async () => {
     for (const [name, count] of [
       ['busy', 5],
       ['steady', 3],
@@ -136,7 +136,7 @@ describe('metrics and health endpoints', () => {
     }
 
     const text = (await opsGet('/metrics').expect(200)).text;
-    const queued = text.split('\n').filter((line) => line.startsWith('flowforge_queue_depth{') && line.includes('status="queued"'));
+    const queued = text.split('\n').filter((line) => line.startsWith('flowforge_queue_depth{') && line.includes('status="delayed"'));
 
     expect(queued).toHaveLength(3);
     expect(queued.map((line) => Number(line.split(' ').pop())).sort((a, b) => b - a)).toEqual([5, 3, 2]);

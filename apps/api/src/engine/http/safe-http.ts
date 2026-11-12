@@ -44,7 +44,15 @@ export class ResponseTooLargeError extends Error {
 }
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-const CREDENTIAL_HEADERS = new Set(['authorization', 'cookie', 'proxy-authorization']);
+const CROSS_ORIGIN_HEADERS = new Set([
+  'accept',
+  'accept-language',
+  'content-language',
+  'content-type',
+  'user-agent',
+  'idempotency-key',
+  'x-correlation-id',
+]);
 const BODY_HEADERS = new Set(['content-type', 'content-length', 'content-encoding', 'transfer-encoding']);
 const GLOBAL_UNICAST_V6 = ipaddr.parseCIDR('2000::/3');
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
@@ -56,7 +64,28 @@ export function isPublicAddress(address: string): boolean {
   return parsed.kind() === 'ipv4' || parsed.match(GLOBAL_UNICAST_V6);
 }
 
-const defaultResolver: Resolver = (hostname) => dns.lookup(hostname, { all: true, verbatim: true });
+const DEFAULT_DNS_TIMEOUT_MS = 2_000;
+const DNS_TRIES = 2;
+const NO_RECORDS = new Set(['ENODATA', 'ENOTFOUND']);
+
+export function nonBlockingResolver(timeoutMs = DEFAULT_DNS_TIMEOUT_MS, servers?: string[]): Resolver {
+  const resolver = new dns.Resolver({ timeout: timeoutMs, tries: DNS_TRIES });
+  if (servers) resolver.setServers(servers);
+  return async (hostname) => {
+    const name = hostname.toLowerCase().replace(/\.$/, '');
+    if (name === 'localhost' || name.endsWith('.localhost')) return [{ address: '127.0.0.1', family: 4 }];
+    const [v4, v6] = await Promise.allSettled([resolver.resolve4(name), resolver.resolve6(name)]);
+    const addresses: LookupAddress[] = [
+      ...(v4.status === 'fulfilled' ? v4.value.map((address) => ({ address, family: 4 })) : []),
+      ...(v6.status === 'fulfilled' ? v6.value.map((address) => ({ address, family: 6 })) : []),
+    ];
+    if (addresses.length > 0) return addresses;
+    const failure = [v4, v6].find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected' && !NO_RECORDS.has((result.reason as NodeJS.ErrnoException).code ?? ''),
+    );
+    throw failure ? failure.reason : Object.assign(new Error(`could not resolve ${name}`), { code: 'ENOTFOUND' });
+  };
+}
 
 type LookupCallback = (error: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void;
 
@@ -109,7 +138,7 @@ export class SafeHttpClient {
     const connectTimeout = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.guarded = new Agent({
       ...timeouts,
-      connect: { timeout: connectTimeout, lookup: guardedLookup(options.resolve ?? defaultResolver) },
+      connect: { timeout: connectTimeout, lookup: guardedLookup(options.resolve ?? nonBlockingResolver()) },
     });
     this.trusted = new Agent({ ...timeouts, connect: { timeout: connectTimeout } });
   }
@@ -136,7 +165,7 @@ export class SafeHttpClient {
       if (hop >= this.options.maxRedirects) throw new TooManyRedirectsError(`more than ${this.options.maxRedirects} redirects`);
       const next = this.parse(new URL(location, url).toString());
       if (next.origin !== url.origin) {
-        headers = Object.fromEntries(Object.entries(headers).filter(([name]) => !CREDENTIAL_HEADERS.has(name.toLowerCase())));
+        headers = Object.fromEntries(Object.entries(headers).filter(([name]) => CROSS_ORIGIN_HEADERS.has(name.toLowerCase())));
       }
       if (response.statusCode === 303 ? method !== 'HEAD' : response.statusCode <= 302 && method === 'POST') {
         method = 'GET';

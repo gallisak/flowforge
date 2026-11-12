@@ -19,6 +19,17 @@ import { ExecutionNotifications1794320800000 } from './1794320800000-execution-n
 import { ExecutionChangeNotifications1794320900000 } from './1794320900000-execution-change-notifications';
 import { ExecutionListIndexes1794321000000 } from './1794321000000-execution-list-indexes';
 import { ExecutionWorkflowStatistics1794321100000 } from './1794321100000-execution-workflow-statistics';
+import { ReaperReleasesInterruptedSteps1794321200000 } from './1794321200000-reaper-releases-interrupted-steps';
+import { LongerTriggerKeys1794321300000 } from './1794321300000-longer-trigger-keys';
+import { PostponedSchedules1794321400000 } from './1794321400000-postponed-schedules';
+import { TenantAwareClaims1794321500000 } from './1794321500000-tenant-aware-claims';
+import { LeastPrivilegeGrants1794321600000 } from './1794321600000-least-privilege-grants';
+import { StepOutputSizes1794321700000 } from './1794321700000-step-output-sizes';
+import { PerStepAttempts1794321800000 } from './1794321800000-per-step-attempts';
+import { WatchedExecutionNotifications1794321850000 } from './1794321850000-watched-execution-notifications';
+import { DataRetention1794321900000 } from './1794321900000-data-retention';
+import { TenantLimitChecks1794322000000 } from './1794322000000-tenant-limit-checks';
+import { NotificationListIndexes1794322100000 } from './1794322100000-notification-list-indexes';
 
 export const migrations = [
   Baseline1794305090749,
@@ -42,4 +53,15 @@ export const migrations = [
   ExecutionChangeNotifications1794320900000,
   ExecutionListIndexes1794321000000,
   ExecutionWorkflowStatistics1794321100000,
+  ReaperReleasesInterruptedSteps1794321200000,
+  LongerTriggerKeys1794321300000,
+  PostponedSchedules1794321400000,
+  TenantAwareClaims1794321500000,
+  LeastPrivilegeGrants1794321600000,
+  StepOutputSizes1794321700000,
+  PerStepAttempts1794321800000,
+  WatchedExecutionNotifications1794321850000,
+  DataRetention1794321900000,
+  TenantLimitChecks1794322000000,
+  NotificationListIndexes1794322100000,
 ];

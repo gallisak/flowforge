@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Param, ParseIntPipe, ParseUUIDPipe, PipeTransform, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
@@ -12,6 +12,14 @@ import { ExecutionStreamService } from './execution-stream.service';
 import { ExecutionsService } from './executions.service';
 
 export const NEXT_CURSOR_HEADER = 'x-next-cursor';
+const MAX_STEP_INDEX = 1_000;
+
+class StepIndexPipe implements PipeTransform<number, number> {
+  transform(value: number): number {
+    if (value < 0 || value > MAX_STEP_INDEX) throw new BadRequestException(`stepIndex must be between 0 and ${MAX_STEP_INDEX}`);
+    return value;
+  }
+}
 
 export class ListExecutionsQuery {
   @IsOptional()
@@ -74,6 +82,22 @@ export class ExecutionsController {
     @Res() res: Response,
   ): Promise<void> {
     return this.streams.stream(t.id, id, req, res);
+  }
+
+  @Get('executions/:id/output')
+  @Header('content-type', 'application/json; charset=utf-8')
+  output(@CurrentTenant() t: AuthenticatedTenant, @Param('id', ParseUUIDPipe) id: string): Promise<string> {
+    return this.executions.outputOf(t.id, id);
+  }
+
+  @Get('executions/:id/steps/:stepIndex/output')
+  @Header('content-type', 'application/json; charset=utf-8')
+  stepOutput(
+    @CurrentTenant() t: AuthenticatedTenant,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('stepIndex', new ParseIntPipe(), new StepIndexPipe()) stepIndex: number,
+  ): Promise<string> {
+    return this.executions.outputOf(t.id, id, stepIndex);
   }
 
   @Get('executions/:id')

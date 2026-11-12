@@ -13,7 +13,15 @@ import {
   TooManyRedirectsError,
 } from './http/safe-http';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from './sandbox/transform-sandbox';
-import { bodyFormatOf, renderBodyTemplate, renderTemplate, renderUrlTemplate, StepContext, UrlTemplateError } from './template';
+import {
+  bodyFormatOf,
+  renderBodyTemplate,
+  renderLogMessage,
+  renderUrlTemplate,
+  StepContext,
+  TemplateTooLargeError,
+  UrlTemplateError,
+} from './template';
 
 export class StepError extends Error {
   constructor(message: string, readonly retryable = true) {
@@ -69,6 +77,7 @@ export class StepExecutor implements OnApplicationShutdown {
         timeoutMs: config.transformTimeoutMs,
         memoryBytes: config.transformMemoryMb * 1024 * 1024,
         stackBytes: SANDBOX_STACK_BYTES,
+        outputMaxBytes: config.stepOutputMaxBytes,
       },
       Math.min(config.workerConcurrency, MAX_SANDBOX_THREADS),
     );
@@ -78,7 +87,7 @@ export class StepExecutor implements OnApplicationShutdown {
     await Promise.all([this.sandbox.close(), this.httpClient.close()]);
   }
 
-  async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<unknown> {
+  async execute(step: StepDefinition, ctx: StepContext, runtime: StepRuntime = {}): Promise<{ output: unknown; bytes: number }> {
     const result = await this.run(step, ctx, runtime);
     if (valueExceedsDepth(result, MAX_JSON_DEPTH)) {
       throw new StepError(`step output is nested deeper than ${MAX_JSON_DEPTH} levels`, false);
@@ -86,13 +95,13 @@ export class StepExecutor implements OnApplicationShutdown {
     const output = toStorable(result);
     const size = output === undefined ? 0 : Buffer.byteLength(JSON.stringify(output));
     if (size > this.outputMaxBytes) throw new StepError(`step output exceeds ${this.outputMaxBytes} bytes`, false);
-    return output;
+    return { output, bytes: size };
   }
 
   private async run(step: StepDefinition, ctx: StepContext, runtime: StepRuntime): Promise<unknown> {
     switch (step.type) {
       case 'log':
-        this.logger.log(sanitizeLogMessage(renderTemplate(step.message, ctx)));
+        this.logger.log(sanitizeLogMessage(renderLogMessage(step.message, ctx, LOG_MESSAGE_MAX_LENGTH + 1).text));
         return { logged: true };
       case 'delay':
         throw new StepError('delay steps are durable timers scheduled by the job runner', false);
@@ -142,7 +151,7 @@ export class StepExecutor implements OnApplicationShutdown {
   private httpFailure(err: unknown): StepError {
     const blocked = findDestinationError(err);
     if (blocked) return new StepError(blocked.message, false);
-    const permanent = [InvalidRequestUrlError, UrlTemplateError, TooManyRedirectsError, ResponseTooLargeError];
+    const permanent = [InvalidRequestUrlError, UrlTemplateError, TemplateTooLargeError, TooManyRedirectsError, ResponseTooLargeError];
     if (permanent.some((type) => err instanceof type)) return new StepError((err as Error).message, false);
     if (REJECTED_REQUEST_CODES.has((err as { code?: string }).code ?? '')) return new StepError('http request is invalid', false);
     const name = (err as Error).name;

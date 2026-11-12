@@ -49,6 +49,17 @@ describe('tenant limits', () => {
       expect(await ctx.ds.getRepository(Job).countBy({ tenantId: await tenantIdOf(target) })).toBe(3);
     });
 
+    it('does not count executions that sleep in a delay or wait for a retry towards the queue limit', async () => {
+      const target = await createWebhookTarget(app, 'queue-sleeping');
+      await admin(await tenantIdOf(target), { maxQueuedJobs: 2 }).expect(200);
+      for (let i = 0; i < 2; i++) await run(target).expect(201);
+      await ctx.ds.getRepository(Job).update({ tenantId: await tenantIdOf(target) }, { runAt: new Date(Date.now() + 3_600_000) });
+
+      await run(target).expect(201);
+      await run(target).expect(201);
+      await run(target).expect(429);
+    });
+
     it('fills the queue up to the limit under concurrent requests and refuses afterwards', async () => {
       const target = await createWebhookTarget(app, 'queue-race');
       await admin(await tenantIdOf(target), { maxQueuedJobs: 5 }).expect(200);

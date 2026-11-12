@@ -10,8 +10,8 @@ export const PROVISION_SQL = join(__dirname, '..', '..', '..', '..', 'docker', '
 export const PROVISION_SQL_IN_CONTAINER = '/flowforge/provision.sql';
 
 export const DB_ROLES = {
-  owner: { user: 'flowforge_owner', password: 'flowforge_owner' },
-  app: { user: 'flowforge_app', password: 'flowforge_app' },
+  owner: { user: 'flowforge_owner', password: process.env.TEST_OWNER_PASSWORD ?? 'flowforge_owner' },
+  app: { user: 'flowforge_app', password: process.env.TEST_APP_PASSWORD ?? 'flowforge_app' },
 } as const;
 
 export function withDatabase(url: string, database: string): string {

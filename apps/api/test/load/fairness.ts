@@ -1,9 +1,14 @@
 import { execSync } from 'child_process';
+import { fromEnvOrRootEnvFile } from '../support/root-env';
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3000';
 const STOP_WORKERS = process.env.STOP_WORKERS ?? 'docker compose -p flowforge stop worker';
 const START_WORKERS = process.env.START_WORKERS ?? 'docker compose -p flowforge start worker';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'change-me-admin';
+const ADMIN_TOKEN = fromEnvOrRootEnvFile('ADMIN_TOKEN');
+if (!ADMIN_TOKEN) {
+  process.stderr.write('Set ADMIN_TOKEN in the .env file at the repository root, or in the environment\n');
+  process.exit(2);
+}
 const BACKLOG = Number(process.env.BACKLOG ?? 20_000);
 const DURATION_SECONDS = Number(process.env.DURATION_SECONDS ?? 60);
 const ENQUEUE_CONCURRENCY = 64;

@@ -1,35 +1,49 @@
 # FlowForge
 
-Multi-tenant durable workflow platform: a tenant defines a workflow as a list of steps (`http`,
-`transform`, `log`, `delay`) and starts it through the API, a signed webhook or a cron schedule.
-NestJS (API, workers, schedulers from one code base), Next.js 14, PostgreSQL 16 as the only queue and
-state store.
+Multi-tenant durable workflow platform: a workflow is a list of `http`, `transform`, `log` and `delay`
+steps started through the API, a signed webhook or a cron schedule. NestJS (API, workers, schedulers from
+one code base), Next.js 15, PostgreSQL 16 as the only queue and state store.
 
 [Running](#running) · [Architecture](#architecture) · [Guarantees](#execution-guarantees) ·
 [Decisions](#design-decisions) · [Findings](#findings) · [Indexes](#indexes-and-query-plans) ·
-[Tests, chaos, load](#tests-chaos-and-load) · [Not done](#not-done-or-done-differently)
+[Tests, chaos, load](#tests-chaos-and-load) · [Changed tests](#changes-to-existing-tests) ·
+[Not done](#not-done-or-done-differently)
 
 ## Running
 
 ```bash
-docker compose -p flowforge up -d --build
+cp .env.example .env                    # fill in ADMIN_TOKEN and the three passwords
+cp apps/api/.env.example apps/api/.env
+docker compose -p flowforge up -d --build --wait
+scripts/smoke.sh                        # tenant, workflow, run until succeeded, frontend
 ```
 
-UI http://localhost:3001, API http://localhost:3000 (ports: `WEB_PORT`, `API_PORT`, `PG_PORT`).
-Compose starts Postgres, a one-off `migrate` job, the API, two workers, two schedulers and the
-frontend; API, workers and schedulers serve `/metrics`, `/health/live`, `/health/ready` on port 9100
-inside the compose network. Configuration: [`apps/api/.env.example`](apps/api/.env.example), validated
-at start-up. API reference: [`docs/openapi.json`](docs/openapi.json) (OpenAPI 3.1).
+UI http://localhost:3001, API http://localhost:3000, API reference [`docs/openapi.json`](docs/openapi.json)
+(OpenAPI 3.1). Compose starts Postgres, a one-off `migrate` job, the API, two workers, two schedulers and
+the frontend; ports are published on `127.0.0.1` only; `/metrics` and `/health/{live,ready}` are on port
+9100 inside the compose network.
+
+| File | Holds |
+|---|---|
+| `.env` | `ADMIN_TOKEN` (`openssl rand -hex 32`), `POSTGRES_PASSWORD`, `FLOWFORGE_OWNER_PASSWORD`, `FLOWFORGE_APP_PASSWORD` (`openssl rand -hex 24`), ports, optional `APP_ORIGIN` |
+| `apps/api/.env` | every platform setting with its default, validated at start-up |
+| `apps/frontend/.env` | `API_URL` for `npm run dev` of the frontend |
+
+- Compose builds the database URLs from `.env`: only `migrate` gets the owner role, the services get
+  `flowforge_app`, only the API gets the admin token. A service refuses to start as the table owner, a
+  superuser or a `BYPASSRLS` role.
+- Roles are created when the `flowforge_pgdata` volume is created; a changed password later needs
+  `ALTER ROLE` or `down -v`.
+- Behind a TLS terminator set `APP_ORIGIN` (`https://...`): the frontend checks `Origin` against it and
+  marks the key cookie `Secure`.
 
 ### Example requests
 
 ```bash
 API=http://localhost:3000
-
-TENANT=$(curl -s -XPOST $API/tenants -H 'x-admin-token: change-me-admin' \
-  -H 'content-type: application/json' -d '{"name":"demo"}')
-KEY=$(echo "$TENANT" | node -pe 'JSON.parse(require("fs").readFileSync(0)).apiKey')
-SECRET=$(echo "$TENANT" | node -pe 'JSON.parse(require("fs").readFileSync(0)).webhookSecret')
+ADMIN_TOKEN=$(grep ^ADMIN_TOKEN= .env | cut -d= -f2)
+TENANT=$(curl -s -XPOST $API/tenants -H "x-admin-token: $ADMIN_TOKEN" -H 'content-type: application/json' -d '{"name":"demo"}')
+KEY=$(echo "$TENANT" | jq -r .apiKey); SECRET=$(echo "$TENANT" | jq -r .webhookSecret)
 
 WF=$(curl -s -XPOST $API/workflows -H "x-api-key: $KEY" -H 'content-type: application/json' -d '{
   "name": "order",
@@ -37,46 +51,32 @@ WF=$(curl -s -XPOST $API/workflows -H "x-api-key: $KEY" -H 'content-type: applic
     {"id": "order", "type": "http", "method": "POST", "url": "https://httpbin.org/anything/orders",
      "headers": {"content-type": "application/json"},
      "body": "{\"customer\": \"{{ input.customer }}\", \"amount\": {{ input.amount }}}"},
-    {"id": "note", "type": "log", "message": "order of {{ input.customer }} received"},
     {"id": "pause", "type": "delay", "ms": 3000},
     {"id": "summary", "type": "transform", "expr": "({ total: ctx.steps.order.body.json.amount * 1.2 })"}
-  ]}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).id')
+  ]}' | jq -r .id)
 
 EX=$(curl -s -XPOST $API/workflows/$WF/run -H "x-api-key: $KEY" -H 'x-request-id: demo-1' \
-  -H 'content-type: application/json' -d '{"customer": "Ann", "amount": 100}' \
-  | node -pe 'JSON.parse(require("fs").readFileSync(0)).id')
+  -H 'content-type: application/json' -d '{"customer": "Ann", "amount": 100}' | jq -r .id)
+curl -N $API/executions/$EX/events -H "x-api-key: $KEY"        # pending → running → waiting → succeeded
+curl -s "$API/executions?status=succeeded&limit=20" -H "x-api-key: $KEY"   # next page: X-Next-Cursor
 
-curl -N $API/executions/$EX/events -H "x-api-key: $KEY"
-curl -s "$API/executions?status=succeeded&limit=20" -H "x-api-key: $KEY"
-```
-
-The stream shows `pending → running → waiting → running → succeeded` and ends with
-`output: {"total": 120}`, `correlationId: "demo-1"`. Lists return the next page cursor in
-`X-Next-Cursor`.
-
-Signed webhook ([Standard Webhooks](https://www.standardwebhooks.com/)). Sending it again returns the
-same `executionId`; a changed body or a timestamp older than 5 minutes returns `401`:
-
-```bash
 BODY='{"customer": "Bob", "amount": 50}'; ID=evt_1; TS=$(date +%s)
 SIG=$(node -e 'const c=require("crypto");const [s,id,ts,b]=process.argv.slice(1);
 console.log("v1,"+c.createHmac("sha256",Buffer.from(s.slice(6),"base64")).update(`${id}.${ts}.${b}`).digest("base64"))' \
   "$SECRET" "$ID" "$TS" "$BODY")
 curl -s -XPOST $API/hooks/$WF -H 'content-type: application/json' \
-  -H "webhook-id: $ID" -H "webhook-timestamp: $TS" -H "webhook-signature: $SIG" -d "$BODY"
+  -H "webhook-id: $ID" -H "webhook-timestamp: $TS" -H "webhook-signature: $SIG" -d "$BODY"   # again: same executionId
 ```
 
-Notifications about finished executions: `PUT /notifications/endpoint {"url": "https://..."}`. In the
-UI, paste the API key on the Connect page, then create, edit, run and follow workflows.
+Notifications: `PUT /notifications/endpoint {"url": "https://..."}` (the signing secret is returned
+once), delivery state at `GET /notifications/events?status=dead`.
 
 ## Architecture
 
-Entry points: `dist/main` (API), `dist/worker` (job runner, lease reaper, outbox dispatcher),
-`dist/scheduler` (cron), `dist/migrate`. Processes coordinate only through Postgres.
-
-Each `T` box is one transaction. Every write of a worker is fenced: in the same transaction it checks
-that the job is still `running` with its `lockedBy` and `attempts`, so a worker that lost its lease
-cannot overwrite the new owner.
+Entry points `dist/main` (API), `dist/worker` (job runner, lease reaper, outbox dispatcher, retention),
+`dist/scheduler`, `dist/migrate`; processes coordinate only through Postgres. Each `T` box is one
+transaction. Every write of a worker is fenced: it checks in the same transaction that the job is still
+`running` with its `lockedBy` and `attempts`.
 
 ```mermaid
 flowchart TD
@@ -85,171 +85,169 @@ flowchart TD
   a duplicate trigger key returns the existing execution"] --> queue[("jobs: queued")]
   queue --> T2["T2 claim_job: fair tenant choice, FOR UPDATE SKIP LOCKED,
   running, lease, attempts + 1"]
-  T2 --> load["load execution, version snapshot, checkpoints;
-  a delay that is due is marked succeeded"]
-  load --> T3["T3 start step (fenced): step_run running, idempotency key"]
-  T3 --> effect[["run the step outside any transaction"]]
-  effect -->|success| T4["T4 checkpoint (fenced): step_run succeeded + output"]
-  T4 -->|next step| T3
-  T4 -->|next step is a delay| T7
-  T4 -->|last step| T5["T5 complete (fenced): job done, execution succeeded, outbox event"]
-  effect -->|error| T6["T6 fail (fenced): step_run failed; job queued with backoff,
-  failed or dead; execution pending or failed; outbox event when final"]
-  load -->|delay step| T7["T7 park (fenced): step_run waiting with wakeAt,
-  job queued at wakeAt, attempt given back, execution waiting"]
-  T7 --> queue
-  T6 -->|retry| queue
-  reaper["T8 reap_expired_jobs: expired lease -> queued or dead (+ failed execution, outbox event)"] --> queue
-  T5 --> outbox[("outbox_events")]
-  T6 --> outbox
-  outbox --> T9["T9 claim_outbox_events: SKIP LOCKED, lease"]
-  T9 --> post[["POST signed notification"]]
-  post --> T10["T10 record result (fenced): delivered, retry later or dead"]
+  T2 --> load["read execution, version snapshot, checkpoints (no writes)"]
+  load --> T3["T3 mark running (fenced): execution running unless it is already final"]
+  T3 -->|next step is a delay that is due| T4
+  T4["T4 wake up (fenced): waiting step_run succeeded"] --> T5
+  T3 -->|next step| T5["T5 start step (fenced): step_run running, idempotency key"]
+  T5 --> effect[["run the step outside any transaction"]]
+  effect -->|success| T6["T6 checkpoint (fenced): step_run succeeded + output"]
+  T6 -->|next step| T5
+  T6 -->|next step is a delay| T8
+  T6 -->|last step| T7["T7 complete (fenced): job done, execution succeeded, error cleared, outbox event"]
+  effect -->|error| T9["T9 fail (fenced): step_run failed; job queued with backoff, failed or dead;
+  execution pending or failed; outbox event when final"]
+  T3 -->|next step is a delay that is not due| T8
+  T8["T8 park (fenced): step_run waiting with wakeAt,
+  job queued at wakeAt, attempt given back, execution waiting"] --> queue
+  T9 -->|retry| queue
+  sigterm["SIGTERM after the grace period"] --> T10["T10 release (fenced): job queued, attempt given back,
+  interrupted step_run failed, execution pending"] --> queue
+  reaper["T11 reap_expired_jobs: expired lease -> queued (execution pending) or dead (failed execution,
+  outbox event); the interrupted step_run failed"] --> queue
+  T7 --> outbox[("outbox_events")]
+  T9 --> outbox
+  outbox --> T12["T12 claim_outbox_events: per-tenant turns, SKIP LOCKED, lease"]
+  T12 --> post[["POST signed notification"]]
+  post --> T13["T13 record result (fenced): delivered, retry later or dead"]
 ```
 
 ## Execution guarantees
 
 | What | Guarantee | Conditions |
 |---|---|---|
-| Job | Run by at most one worker at a time | Lease + fencing. A worker paused longer than the lease can still finish its in-flight request, hence the idempotency key |
-| `http` step | At least once; effectively once if the receiver deduplicates by `Idempotency-Key` | Key `<executionId>:<stepId>`, the same for every attempt; repeated only if the step did not finish (error, crash, shutdown) |
-| `transform`, `log` | At least once | No external effect; a `log` line can repeat after a crash before the checkpoint |
+| Job | Run by at most one worker at a time | Lease + fencing; a worker gives a job up when its last renewal is older than the lease minus 1 s |
+| `http` step | At least once; effectively once if the receiver deduplicates by `Idempotency-Key` | Key `<executionId>:<stepId>` and the same body on every attempt; repeated only if the step did not finish |
+| `transform`, `log` | At least once | No external effect |
 | Succeeded step | Never run again | Output stored with the success in one fenced transaction |
 | `delay` | Wakes up no earlier than `wakeAt` | Survives restarts, holds no worker slot |
-| Execution | One final state, steps of one version | Version fixed at creation; fails with a reason after 3 claims or a non-retryable error |
-| Webhook trigger | One execution per `(workflow, webhook-id)` | Unique trigger key; a retry signed with a fresh timestamp is recognised at any later time |
-| Cron trigger | One execution per `(workflow, scheduled time)` | Row lock on the schedule + unique trigger key |
+| Execution | One final state, steps of one version | Version fixed at creation; fails after `JOB_MAX_ATTEMPTS` (8) attempts of one step, a non-retryable error or outputs over `EXECUTION_OUTPUT_MAX_BYTES` |
+| Webhook / cron trigger | One execution per `(workflow, webhook-id)` / `(workflow, scheduled time)` | Unique trigger key (+ row lock on the schedule) |
 | API run | One execution per request | No client idempotency key |
-| Notification | At least once, the same `webhook-id` on every attempt | Recorded in the transaction of the final status; 15 attempts with backoff, then `dead`; order not guaranteed |
+| Notification | At least once, same `webhook-id` on every attempt | Written in the transaction of the final status; 15 attempts with backoff, then `dead`; order not guaranteed |
 
 ## Design decisions
 
 ### 3.3.1 Queue
-- **Chosen:** one `claim_job` function (`FOR UPDATE SKIP LOCKED`) that also sets a lease; heartbeat every
-  third of the lease; a reaper in every worker; fencing on every write. Retries with jittered exponential
-  backoff (`RETRY_BASE_MS`, `RETRY_CAP_MS`); retryable: network errors, timeouts, 5xx, 408, 425, 429,
-  database errors; other errors give `failed`, exhausted attempts `dead`. SIGTERM: stop claiming, wait
-  `WORKER_SHUTDOWN_GRACE_MS`, return unfinished jobs without counting the attempt; readiness turns 503.
-- **Why:** claiming is a single statement, so a job cannot be taken twice; state is visible in the table
-  and survives any process; a lease lets a job run for minutes without an open transaction.
-- **Alternatives:** advisory locks (no record of the holder, no "retry at"), `LISTEN/NOTIFY` only (not durable).
-- **Limits:** a dead worker is noticed after the lease plus one reaper interval (30 + 5 s); idle slots poll
-  every 250 ms.
+- **Chosen:** `claim_job` (`FOR UPDATE SKIP LOCKED`) sets a lease; chained heartbeats every third of the
+  lease plus a local deadline; a reaper in every worker; fencing on every write. Attempts count per step
+  (`JOB_MAX_ATTEMPTS`, 8); jittered exponential backoff (`RETRY_BASE_MS`, `RETRY_CAP_MS`), also after a
+  lease expired; retryable: network errors, timeouts, 5xx, 408, 425, 429; exhausted jobs are `dead`.
+  SIGTERM: stop claiming, wait `WORKER_SHUTDOWN_GRACE_MS`, return unfinished jobs without counting the attempt.
+- **Why:** one statement claims, so a job cannot be taken twice; a lease lets a job run for minutes
+  without an open transaction; counting per step keeps the progress of long workflows.
+- **Alternatives:** advisory locks (no record of the holder, no "retry at"); `LISTEN/NOTIFY` only (not durable).
+- **Limits:** a dead worker is noticed after the lease plus a reaper pass (30 + 5 s); idle slots poll every
+  250 ms; the worker pool needs `2 × WORKER_CONCURRENCY + OUTBOX_CONCURRENCY + 2` connections (`DB_POOL_SIZE`).
 
 ### 3.3.2 Durable execution
-- **Chosen:** one `step_runs` row per `(executionId, stepIndex)`; a retry rebuilds `ctx.steps` from
-  succeeded rows and starts at the first unfinished step. Every request of an http step carries
-  `Idempotency-Key: <executionId>:<stepId>` and `X-Correlation-Id` (users cannot override them). Changing
-  `steps` inserts an immutable `workflow_versions` row; an execution runs the version it was created with.
-- **Why:** checkpoint and success are written together, so a succeeded step is never computed again.
-- **Alternatives:** copying the steps into every execution instead of versions (duplication, no version
-  history).
+- **Chosen:** one `step_runs` row per step; a retry rebuilds `ctx.steps` from succeeded rows and starts at
+  the first unfinished step; later steps always read the stored output, so a retried request has the same
+  bytes. `Idempotency-Key` and `X-Correlation-Id` on every http request. Changing `steps` inserts an
+  immutable `workflow_versions` row; an execution runs the version it was created with.
+- **Why:** checkpoint and success are one transaction, so a succeeded step is never computed again.
+- **Alternatives:** copying the steps into every execution (duplication, no history).
 - **Limits:** effectively-once needs a receiver that honours the key.
 
 ### 3.3.3 Durable timers
-- **Chosen:** a `delay` step marks its `step_run` `waiting` with `wakeAt` and queues the job with
-  `runAt = wakeAt`, giving the attempt back, in one transaction; the worker slot is released.
-- **Why:** the timer is a row, so it survives restarts; the job already has `runAt`, no extra process.
-- **Alternatives:** a separate timers table with its own poller.
-- **Limits:** wake-up is no earlier than `wakeAt`, later by the poll interval or while the tenant is at
-  its concurrency limit.
+- **Chosen:** a `delay` marks its step `waiting` with `wakeAt` and requeues the job with `runAt = wakeAt`,
+  giving the attempt back, in one transaction.
+- **Why:** the timer is a row, survives restarts and needs no extra process.
+- **Alternatives:** a timers table with its own poller.
+- **Limits:** wake-up is later than `wakeAt` by up to the poll interval, or while the tenant is at its limit.
 
 ### 3.3.4 Tenant isolation and limits
-- **Chosen:** services connect as `flowforge_app` (not a superuser, `NOBYPASSRLS`); the schema belongs to
-  `flowforge_owner`, which runs migrations. Every tenant table has row level security
-  (`"tenantId" = app_current_tenant()`); `TenantDb.run` opens a transaction and sets
-  `app.tenant_id` with `set_config(..., true)`, and services reach the database only through it.
-  Cross-tenant operations (key lookup, webhook routing, claims, reaper, rate limit, metrics) are narrow
-  `SECURITY DEFINER` functions. API services also filter by `tenantId`.
-- **Limits per tenant** (`PATCH /tenants/:id/limits`, defaults in `.env.example`): concurrent jobs
-  (checked inside `claim_job` under the tenant's row lock, exact); queued jobs (on enqueue, `429` +
-  `Retry-After`); requests per minute (fixed window in Postgres, shared by the API and valid webhooks,
-  `X-RateLimit-*`).
-- **Why:** a missing check in code still cannot leak data, and a query without a tenant sees no rows
-  (`tenancy/row-level-security.int-spec.ts`).
-- **Alternatives:** rate limits in memory of each instance (the limit grows with the number of
-  instances), a token bucket in Postgres (same round trip, more writes).
-- **Limits:** the queue limit is soft (concurrent requests can exceed it by their number); the rate
-  window allows up to 2× the limit around its edge.
+- **Chosen:** services connect as `flowforge_app` (`NOBYPASSRLS`) and refuse to start as anything more
+  privileged; the schema belongs to `flowforge_owner`. Every tenant table has row level security on
+  `app.tenant_id`, set per transaction by `TenantDb.run`; cross-tenant work (key lookup, webhook routing,
+  claims, reaper, retention, metrics) goes through narrow `SECURITY DEFINER` functions; services also
+  filter by `tenantId`. The application role cannot change `migrations`, `workflow_versions` or `tenants`.
+- **Limits per tenant** (`PATCH /tenants/:id/limits`, range checked in the database): concurrent jobs, that is
+  running executions (in `claim_job`, exact; a sleeping `delay` does not count), ready jobs in the queue (`429` + `Retry-After`), requests per minute (fixed
+  window in Postgres, `X-RateLimit-*`), workflows (`TENANT_MAX_WORKFLOWS`). Failed authentication is
+  limited per address in memory before any database work (`AUTH_FAILURES_PER_MINUTE`).
+- **Why:** a missing check in code still cannot leak data (`tenancy/row-level-security.int-spec.ts`).
+- **Alternatives:** schema per tenant (migrations × tenants); in-memory rate limits (grow with instances).
+- **Limits:** the queue limit is soft under concurrent requests and ignores sleeping jobs; the rate window
+  allows up to 2× around its edge.
 
 ### 3.3.5 Fair scheduling
-- **Chosen:** `claim_job` walks tenants that have ready jobs (skip scan over
-  `(tenantId, runAt) WHERE queued`), takes the least recently served one whose state row it can lock
-  with `SKIP LOCKED` and whose concurrency limit allows it, and claims its oldest job; contended claims
-  retry up to five times with 2 ms pauses.
-- **Why:** round-robin between tenants: a backlog costs others at most one job per turn
-  ([measurement](#load-fair-scheduling)).
-- **Alternatives:** a queue and dispatcher per tenant (more processes), random tenant choice (weaker tail).
+- **Chosen:** `claim_job` walks tenants with queued jobs (skip scan, one index probe each), keeps those
+  whose oldest job is due, takes the least recently served one it can lock with `SKIP LOCKED` and whose
+  concurrency limit allows it, and claims its oldest job.
+- **Why:** round-robin between tenants: a backlog costs others at most one job per turn ([measured](#load-fair-scheduling)).
+- **Alternatives:** a queue and dispatcher per tenant; random tenant choice (weaker tail).
 - **Limits:** fair per job, not per CPU time; no weights.
 
 ### 3.3.6 Safe step execution
-- **Chosen, `http`:** a guarded undici agent. `http(s)` only, no credentials; the URL template needs a
-  fixed origin, values are percent-encoded and the rendered origin is checked again. Its `lookup`
-  resolves every address and refuses the request if any is not public unicast (ipaddr.js; IPv6 only
-  `2000::/3`), then connects to the checked address, so a second DNS answer cannot redirect it.
-  Redirects are followed manually (≤ `HTTP_MAX_REDIRECTS`), each hop checked again, `Authorization`,
-  `Cookie` and `Proxy-Authorization` dropped across origins. One deadline per step (`HTTP_TIMEOUT_MS`);
-  the body is streamed and cut at `HTTP_MAX_RESPONSE_BYTES`.
-- **Chosen, `transform`:** QuickJS (WebAssembly) in a small thread pool; each evaluation gets a fresh
-  runtime with a memory limit (`TRANSFORM_MEMORY_MB`), a 48 KiB stack and an interrupt deadline
-  (`TRANSFORM_TIMEOUT_MS`). Input goes in and the result comes out as JSON, so no host object is
-  reachable; a thread that misses the deadline is terminated and replaced.
-- **All steps:** outputs over `STEP_OUTPUT_MAX_BYTES` or 64 levels fail without retry; log messages are
-  escaped and cut at 2 KiB; the definition is limited (50 steps, body 64 KiB, expression 4 KiB,
-  delay ≤ 1 h, connection headers forbidden).
-- **Alternatives:** `request-filtering-agent`/`ssrf-req-filter` (made for `http.Agent`, no redirect
-  control); egress proxy (needs another service); `vm`/`new Function` (not a boundary); `isolated-vm`
-  (native module); an expression language (breaks existing expressions).
-- **Limits:** the SSRF guard lives in the worker process; `SSRF_ALLOWLIST` (empty by default) bypasses
-  it for listed hosts.
+- **`http`:** guarded undici agent; the URL template needs a fixed origin, values are percent-encoded,
+  the rendered origin is checked again and `.`/`..` path segments are refused. Its `lookup` resolves every
+  address (c-ares, 2 s) and refuses any that is not public unicast, then connects to the checked address,
+  so DNS rebinding cannot redirect it. Redirects are followed by hand (`HTTP_MAX_REDIRECTS`), each hop
+  checked again, credentials and custom headers dropped across origins. One deadline per step
+  (`HTTP_TIMEOUT_MS`), body cut at `HTTP_MAX_RESPONSE_BYTES`. Bodies with a JSON type or JSON shape are
+  rendered with JSON escaping.
+- **`transform`:** JavaScript in QuickJS (WebAssembly) in a small thread pool; each evaluation gets a fresh
+  runtime with `TRANSFORM_MEMORY_MB`, a 48 KiB stack and `TRANSFORM_TIMEOUT_MS`; JSON in and out, so no
+  host object is reachable; the expression is compiled apart from the wrapper and the result size is
+  checked before it leaves the sandbox; a thread that misses the deadline is replaced.
+- **All steps:** an output over `STEP_OUTPUT_MAX_BYTES` or 64 levels, or outputs of one execution over
+  `EXECUTION_OUTPUT_MAX_BYTES`, fail without retry; rendered urls (8 KiB) and bodies (1 MiB) are bounded
+  while they render; definitions are limited (50 steps, body 64 KiB, expression 4 KiB, delay ≤ 1 h).
+- **Why QuickJS:** existing workflows use JavaScript expressions; `vm`/`new Function` are not a boundary;
+  `isolated-vm` is a native module per Node version; WebAssembly has no Node APIs and exact limits.
+- **Alternatives:** `request-filtering-agent` (no redirect control), an egress proxy, an expression language.
+- **Limits:** the SSRF guard lives in the worker; `SSRF_ALLOWLIST` bypasses it per host; built-ins like
+  `'x'.repeat(n)` do not check the deadline, so the hard kill comes at twice the timeout.
 
 ### 3.3.7 Incoming webhooks
-- **Chosen:** `webhook-signature: v1,<base64 HMAC-SHA256(key, id.timestamp.raw body)>` over the bytes
-  as received, compared with `timingSafeEqual` against every active secret; timestamp within
-  `WEBHOOK_TOLERANCE_SECONDS`; trigger key `webhook:<workflowId>:<webhook-id>` with a unique index, so a
-  redelivery returns the existing execution. Rotation: `POST /webhook-secrets` returns a new secret once,
-  the old ones stay valid for `WEBHOOK_SECRET_GRACE_SECONDS`; `DELETE` revokes at once.
-- **Why:** the starter `x-signature` over a re-serialised body could not stop replays; Standard Webhooks
-  is what senders already implement.
-- **Alternatives:** a seen-ids table cleaned after twice the window (lets late retries through).
+- **Chosen:** Standard Webhooks: `v1,<base64 HMAC-SHA256(id.timestamp.raw body)>` over the bytes as
+  received (compressed bodies `415`), `timingSafeEqual` against every active secret, timestamp within
+  `WEBHOOK_TOLERANCE_SECONDS`, trigger key `webhook:<workflowId>:<webhook-id>` with a unique index.
+  Rotation: `POST /webhook-secrets` returns a new secret once, old ones stay valid for
+  `WEBHOOK_SECRET_GRACE_SECONDS`, at most three are active.
+- **Why:** senders already implement the scheme; the unique key makes any later redelivery a no-op.
+- **Alternatives:** a seen-ids table cleaned after the window (lets late retries through).
 - **Limits:** secrets are stored in plain text, protected by row level security.
 
 ### 3.3.8 Scheduler
-- **Chosen:** a separate process (two replicas). `workflows.nextRunAt` is stored and indexed; a tick
-  claims one due workflow at a time (`FOR UPDATE SKIP LOCKED`), enqueues its occurrences with trigger
-  keys `cron:<workflowId>:<time>` and moves `nextRunAt` in the same transaction; ticks are chained with
-  `setTimeout`. Cron is evaluated with `cron-parser@4` in the workflow's IANA time zone, from the
-  previous planned run. Missed runs (older than `SCHEDULER_MISFIRE_GRACE_MS`): `skip`, `once` (default,
-  the latest one) or `all` (up to `SCHEDULER_MAX_CATCH_UP_RUNS`). Crons firing more often than once a
-  minute are rejected.
+- **Chosen:** a separate process (two replicas); `workflows.nextRunAt` is indexed; a tick claims one due
+  workflow at a time (`FOR UPDATE SKIP LOCKED`), enqueues with trigger key `cron:<workflowId>:<time>` and
+  moves `nextRunAt` in the same transaction. Missed runs older than `SCHEDULER_MISFIRE_GRACE_MS`: `skip`,
+  `once` (default) or `all` (up to `SCHEDULER_MAX_CATCH_UP_RUNS`); skipped runs are counted and logged.
+  A full tenant queue postpones by `SCHEDULER_POSTPONE_MS` without blocking other tenants.
+- **Time zones:** `cron-parser` lists wall-clock times in UTC and `src/scheduler/zoned-cron.ts` maps them
+  to the zone with `Intl` offsets: with a fixed hour a missing time moves forward and a repeated one runs
+  once; with `*` or `*/n` hours the schedule follows elapsed time. Tested over two years in 17 zones,
+  including 30-minute, 2-hour and midnight changes.
 - **Why:** the row lock and the unique key each prevent a second run on their own.
-- **Alternatives:** leader election with an advisory lock (one instance does all the work, failover waits
-  for the session to end).
-- **Limits:** the start moment depends on the clock of the scheduler host.
+- **Alternatives:** leader election with an advisory lock (one busy instance, failover waits for the session).
+- **Limits:** the start moment depends on the scheduler host clock; crons more often than once a minute
+  are refused.
 
 ### 3.3.9–3.3.11 Notifications, observability, frontend
-- **Outbox:** `record_execution_event` inserts an `outbox_events` row in the transaction of every final
-  status when the tenant has an endpoint; the dispatcher claims events with `SKIP LOCKED`, posts
-  `{type, timestamp, data}` through the SSRF guard, signs it like a webhook with separate outbound
-  secrets and retries with backoff.
-- **Correlation:** `x-request-id` (or a new UUID) is returned on every response and stored as
-  `executions.correlationId`; workers log it with `tenantId`, `executionId`, `jobId`, `attempt`,
-  `stepId` and send it as `X-Correlation-Id` in http steps and notifications. Logs are pino JSON with
-  secrets redacted; unexpected errors answer `500 Internal server error`.
-- **Metrics:** `flowforge_queue_depth{tenant_id,status}`, `flowforge_job_claim_latency_seconds`,
-  `flowforge_step_duration_seconds`, `flowforge_job_retries_total`, `flowforge_jobs_dead_total`, plus
-  outbox, scheduler, rate limit and HTTP metrics.
-- **Frontend:** SSE (one direction, built-in reconnect, plain HTTP through the Next.js proxy) fed by
-  `pg_notify` triggers on `executions` and `step_runs`; each (re)connection gets a full snapshot. The
-  page closes the stream on unmount and on a final status and reconnects with backoff. Executions list
-  with cursor pagination and status/workflow filters; workflow form with validation; loading, empty and
-  error states.
+- **Outbox:** a row in the transaction of every final status; the dispatcher claims with `SKIP LOCKED`,
+  per-tenant turns and at most `OUTBOX_TENANT_CONCURRENCY` in flight, posts through the SSRF guard, signs
+  like a webhook with separate secrets, retries with backoff.
+- **Observability:** `x-request-id` becomes `executions.correlationId`, is logged by workers with tenant,
+  execution, job, attempt and step, and sent as `X-Correlation-Id`; pino JSON logs with secrets redacted;
+  metrics `flowforge_queue_depth{tenant_id,status}`, `flowforge_job_claim_latency_seconds`,
+  `flowforge_step_duration_seconds`, `flowforge_job_retries_total`, `flowforge_jobs_dead_total` and more.
+- **Live updates:** SSE through the Next.js proxy, fed by `pg_notify` triggers for executions that a stream
+  watches (`execution_watches`); snapshots leave out outputs over 8 KiB (full value at
+  `/executions/{id}/output`, `/executions/{id}/steps/{index}/output`), streams of one execution share one
+  read, a slow client gets only the latest snapshot; the listener pings its connection.
+- **Frontend:** the page closes its stream on unmount and on a final status and reconnects with backoff;
+  executions list with cursor pages and filters; workflow form with the API rules; loading, empty and
+  error states; CSP and `no-store` proxy answers.
+- **Retention:** workers delete data finished more than `RETENTION_DAYS` (30) ago and unused versions.
 
 ## Findings
 
-Every finding has a reproduction that fails on the commit that adds it and passes on the next commit
-(the fix); `scripts/prove-finding.sh F-NN` checks both. Lines refer to `initial commit` (`5acc271`),
-paths are under `apps/api` unless they start with `apps/`. F-21 (non-atomic transitions) is part of F-18.
+Every finding has a reproduction that fails on the commit that adds it and passes on the next one (the
+fix); `scripts/prove-finding.sh F-NN` checks both. Lines refer to `initial commit` (`5acc271`); paths are
+under `apps/api` unless they start with `apps/` or name a root file. F-21 (non-atomic transitions) is
+part of F-18.
 
 ### F-01 · Any tenant can read any execution by id · Tenant isolation · Critical
 - **What:** `src/executions/executions.controller.ts:31-34`, `src/executions/executions.service.ts:33-37` look up by id only.
@@ -261,14 +259,14 @@ paths are under `apps/api` unless they start with `apps/`. F-21 (non-atomic tran
 ### F-02 · Tenant isolation unit test cannot fail · Tests that pass regardless · Medium
 - **What:** `test/executions.service.spec.ts:8,23-26` mocks the repository to return `[]` and expects `[]`.
 - **Why dangerous:** green for any implementation, including one that returns every tenant's data.
-- **Reproduce:** `scripts/mutation/F-02.sh` removes the tenant filter; the old test stays green.
+- **Reproduce:** `scripts/prove-finding.sh F-02` runs `scripts/mutation/F-02.sh` (removes the tenant filter of the starter query) at both commits: the old test stays green, the new one fails. Later code has a different query and row level security, so on it the script stops with an error.
 - **Fix** (`0bc710c`): `test/integration/findings/F-02-execution-list-isolation.int-spec.ts` with two tenants on a real database; red under the same mutation.
 - **Alternatives:** asserting mock arguments (still tied to the implementation).
 
 ### F-03 · Concurrent workers execute the same job several times · Queue, several workers · Critical
 - **What:** `src/engine/job-queue.service.ts:17-34`: `SELECT`, then `UPDATE` by id without a lock or status check.
 - **Why dangerous:** slots polling at the same moment take the same job, so payments or emails in http steps repeat.
-- **Reproduce:** `test/integration/findings/F-03-exactly-once-claim.int-spec.ts` (4 workers × 4 slots, 200 jobs).
+- **Reproduce:** `test/integration/findings/F-03-exactly-once-claim.int-spec.ts` (4 workers × 4 slots, 60 jobs).
 - **Fix** (`7f29ccb`): one `UPDATE ... FOR UPDATE SKIP LOCKED` in `claim_job`.
 - **Alternatives:** advisory locks; optimistic `WHERE status = 'queued'` with retries.
 
@@ -303,7 +301,7 @@ paths are under `apps/api` unless they start with `apps/`. F-21 (non-atomic tran
 ### F-08 · Http steps can reach internal addresses · Step security · Critical
 - **What:** `src/engine/step-executor.ts:39-46` fetches any URL and follows redirects.
 - **Why dangerous:** cloud metadata, Postgres and the API in the compose network, loopback services.
-- **Reproduce:** `test/integration/findings/F-08-ssrf.int-spec.ts` (loopback notations, private ranges, metadata, IPv6, redirects, rebinding).
+- **Reproduce:** `test/integration/findings/F-08-ssrf.int-spec.ts` (six loopback notations and a redirect from an allowed host). Private ranges, cloud metadata, IPv6 and DNS rebinding are covered by `test/safe-http.spec.ts`, which was added with the fix and therefore was never red.
 - **Fix** (`59434fe`): guarded undici agent ([3.3.6](#336-safe-step-execution)).
 - **Alternatives:** filtering agents for `http.Agent`, an egress proxy.
 
@@ -373,7 +371,7 @@ paths are under `apps/api` unless they start with `apps/`. F-21 (non-atomic tran
 ### F-18 · A retry repeats steps that already succeeded · Execution properties · Critical
 - **What:** `src/engine/job-runner.service.ts:60-64` starts from step 0 on every attempt; `:56-91` updates three tables in separate statements.
 - **Why dangerous:** a failure in a later step repeats earlier side effects; a crash between statements leaves, for example, a `succeeded` execution with a `running` job.
-- **Reproduce:** `test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts`.
+- **Reproduce:** `test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts` proves the repeated steps. The non-atomic transitions (F-21) are proven by mutation: `scripts/mutation/starter-defects.sh non-atomic-completion` splits the completion back into two transactions as in the starter, and `outbox/notifications.int-spec.ts` ("same transaction as the final state"), green on the current code, fails because the job is `done` while the execution is not.
 - **Fix** (`b02e231`): fenced per-step checkpoints, one transaction per transition, idempotency keys.
 - **Alternatives:** event sourcing; requiring idempotent steps from users.
 
@@ -447,52 +445,94 @@ paths are under `apps/api` unless they start with `apps/`. F-21 (non-atomic tran
 - **Fix** (`e2a9f3f`): values encoded for the body format (JSON string, JSON value, form).
 - **Alternatives:** a structured body object; no placeholders in bodies.
 
+### Defects in code written during this work
+
+Three code reviews after the findings found defects in the new code, not in the starter. Each review is
+fixed in one commit with tests that failed before it: `fix: resolve defects found in the final code
+review`, `... second code review`, `... third code review`. The main ones:
+
+- **Queue and durability:** unfenced `running` writes, the reaper leaving steps `running`, a failure
+  record replacing the step error, attempts counted per execution instead of per step, no backoff after
+  a lost lease, a lost lease noticed 20 s late, retries sending other body bytes with the same key, a due
+  `delay` always parked again, unbounded total outputs per job, a pool too small for heartbeats.
+- **Isolation and boundary:** no check of the database role, writable `migrations`/`tenants`/versions,
+  unranged tenant limits, form-encoded and UTF-16 bodies bypassing the NUL and depth checks, `..` in url
+  values, unescaped `text/json` bodies, a sandbox result copied out before its size check, database work
+  for every forged request.
+- **Resources:** full outputs in execution details and every stream snapshot, a read per stream per
+  change, no backpressure, unbounded lists, versions and finished data, slow cron validation, an unbounded
+  time-zone cache, a notification lock on every commit, a LISTEN connection never checked.
+- **Scheduler and outbox:** clock changes at midnight or of 30 minutes, a full tenant queue delaying
+  every schedule, a hanging endpoint holding the dispatcher, a notification list that walked the
+  finished events of every tenant (newest first) to find 20 of one tenant.
+- **Frontend and operations:** forms refusing what the API accepts, raw API messages and no retry on
+  server rendered error states, cacheable proxy answers, a long
+  insecure cookie, no security headers, endless reconnects, no restart policy, CI that never started the
+  stack, dependencies with known advisories, tests that could not fail.
+
+### Starter defects fixed without a reproduction
+
+These were fixed while building a feature, so no commit holds a red test for them. They are proven by
+mutation instead: `scripts/mutation/starter-defects.sh [mutant]` copies the app, checks that the test
+passes, puts the starter defect back and requires the same test to fail (all six mutants are killed).
+
+| Defect (starter) | Why dangerous | Fix | Test · mutant | Alternative |
+|---|---|---|---|---|
+| No database timeouts (`src/app.module.ts:18-23`) · Resources · High | a paused or locked Postgres makes every request and worker hang | `987ffa7`: connect, statement and client timeouts | `db/timeouts.int-spec.ts` · `database-timeouts` | timeouts per query |
+| Admin token checked after the body was validated (`src/tenants/tenants.controller.ts:27-31`) · Security · Low | anyone learns the admin API from `400` answers | `987ffa7`: a guard runs before validation | `tenancy/admin-endpoint.int-spec.ts` · `admin-token-after-validation` | a separate admin port |
+| Frontend proxy without a deadline (`apps/frontend/app/api/proxy/[...path]/route.ts`) · Resources · Medium | a hanging API holds frontend requests forever | `24bcf46`: `AbortSignal.timeout`, `504` | `apps/frontend/test/proxy-route.test.ts` · `proxy-without-timeout` | a timeout in the reverse proxy |
+| Frontend proxy forwards any path segment (same file) · Security · Medium | `..` or encoded segments reach API routes the UI never calls | `24bcf46`: segments must match `[A-Za-z0-9_-]+` | `proxy-route.test.ts` · `proxy-without-path-check` | an allowlist of routes |
+| `/api/connect` without an origin check (`apps/frontend/app/api/connect/route.ts`) · Security · Medium | another site posts its own key (login CSRF), the user then acts in the attacker's tenant | `24bcf46`: `Origin` must match | `connect-route.test.ts` · `connect-without-origin-check` | a CSRF token |
+| Non-atomic transitions (F-21, part of [F-18](#f-18--a-retry-repeats-steps-that-already-succeeded--execution-properties--critical)) | a crash between statements leaves a `done` job with a `running` execution | `b02e231`: one fenced transaction per transition | `outbox/notifications.int-spec.ts` · `non-atomic-completion` | — |
+
 ## Indexes and query plans
 
-| Query | Index | Time, ms |
-|---|---|---|
-| Tenants with ready jobs / oldest ready job of a tenant / queue limit | `IDX_jobs_queued_by_tenant (tenantId, runAt) WHERE status='queued'` | 0.355 / 0.011 / 0.464 |
-| Running jobs of a tenant | `IDX_jobs_running_by_tenant` or `IDX_jobs_expired_leases` (both partial on `running`) | 0.038 |
-| Expired leases | `IDX_jobs_expired_leases (lockedUntil) WHERE status='running'` | 1.249 |
-| Executions of a tenant, newest first, with cursor | `IDX_executions_tenant_created (tenantId, createdAt, id)` | 0.114 |
-| … by status / by workflow | `IDX_executions_tenant_status_created`, `IDX_executions_tenant_workflow_created` | 0.241 / 0.230 |
-| Trigger key (idempotency of webhooks and cron) | `UQ_executions_tenant_trigger_key (tenantId, triggerKey) WHERE NOT NULL` | 0.029 |
-| Checkpoints / version snapshot | `UQ_step_runs_execution_step`, `UQ_workflow_versions_workflow_version` | 0.065 / 0.018 |
-| Next due schedule | `IDX_workflows_next_run_at WHERE nextRunAt IS NOT NULL` | 0.024 |
-| Due and abandoned notifications | `IDX_outbox_events_due`, `IDX_outbox_events_expired_leases` | 0.277 |
+| Query | Index |
+|---|---|
+| Tenants with queued jobs / oldest ready job of a tenant / queue limit | `IDX_jobs_queued_by_tenant (tenantId, runAt) WHERE status='queued'` |
+| Running jobs of a tenant, expired leases | `IDX_jobs_running_by_tenant`, `IDX_jobs_expired_leases (lockedUntil)` (partial on `running`) |
+| Executions of a tenant, newest first, by status, by workflow | `IDX_executions_tenant_created`, `_tenant_status_created`, `_tenant_workflow_created` (all end with `createdAt, id`) |
+| Workflows of a tenant, newest first | `IDX_workflows_tenant_created (tenantId, createdAt, id)` |
+| Idempotency of webhooks and cron | `UQ_executions_tenant_trigger_key (tenantId, triggerKey) WHERE NOT NULL` |
+| Checkpoints, version snapshot | `UQ_step_runs_execution_step`, `UQ_workflow_versions_workflow_version` |
+| Next due schedule | `IDX_workflows_due (COALESCE(scheduleRetryAt, nextRunAt))` (partial) |
+| Due notifications, abandoned deliveries, notifications of a tenant (by state) | `IDX_outbox_events_pending_by_tenant`, `_expired_leases`, `_tenant_created`, `_tenant_status_created` (end with `createdAt, id`) |
+| Retention | `IDX_executions_finished`, `IDX_executions_unfinished_version`, `IDX_outbox_events_finished`, `IDX_jobs_execution` |
 
 **How verified:** `test/integration/db/query-plans.int-spec.ts` loads 50 tenants, 5 000 workflows,
-100 000 executions and jobs, 160 000 step runs and 50 000 outbox events, then calls the real `TenantDb`
-and `ExecutionsService` as the application role; `auto_explain` reports the plan of every statement,
-including those inside the PL/pgSQL queue functions. It requires the expected index, no sequential scan
-of a large table and no sort of more than one page; removing an index from the migrations fails it.
-Times are actual times from one run (`QUERY_PLAN_REPORT=plans.md npx jest query-plans` writes them).
-The test found that the list by workflow sorted all executions of the workflow (estimate 2 rows, actual
-100, because `tenantId` and `workflowId` are correlated); the migration
-`1794321100000-execution-workflow-statistics` adds dependency statistics on the pair and fixes the plan.
+100 000 executions and jobs, 160 000 step runs and 50 000 notifications plus a tenant with 10 000 sleeping
+jobs, calls the real services as the application role and reads every plan through `auto_explain`, also
+inside the PL/pgSQL functions. It requires the expected index, no sequential scan of a large table, no
+sort of more than one page and, for claims, fewer than 1 000 rows thrown away by a filter; removing an
+index fails it. `QUERY_PLAN_REPORT=plans.md npx jest query-plans` writes the measured times.
 
 ## Tests, chaos and load
 
 ```bash
 cd apps/api && npm ci && npm run lint && npm run typecheck
-npm run test:unit                # 330 tests, no database
-npm run test:int                 # 284 tests, Postgres 16 via Testcontainers (Docker)
-cd ../frontend && npm ci && npm run lint && npm test && npm run build   # 66 tests
+npm run test:unit                # 412 tests, no database
+npm run test:int                 # 384 tests, Postgres 16 via Testcontainers (Docker)
+cd ../frontend && npm ci && npm run lint && npm run typecheck && npm test && npm run build   # 95 tests
 cd ../.. && scripts/prove-finding.sh F-03    # red before the fix, green after it
+scripts/mutation/starter-defects.sh          # starter defects without a red commit, by mutation
 ```
 
-Each integration test file gets its own database cloned from a migrated template; CI runs all of the
-above except `prove-finding.sh`.
+Each integration test file gets its own database cloned from a migrated template. `TEST_DATABASE_URL`
+(a superuser URL) uses an existing server instead of a container: it drops and recreates `ff_template`,
+`ff_template_empty` and `ff_t_*` databases, needs `psql` on the host, and creates the roles with
+`TEST_OWNER_PASSWORD`/`TEST_APP_PASSWORD` (default: the role names) if they are missing. CI runs all of
+the above except `prove-finding.sh` and the mutation scripts, audits production dependencies, builds the images, starts the stack
+and runs `scripts/smoke.sh`.
 
 | Requirement (task 6) | Tests |
 |---|---|
-| Backoff, definition validation, sandbox, webhook signature, cron in time zones and on DST dates | `test/retry-backoff.spec.ts`, `definition.spec.ts`, `workflow-definition-limits.spec.ts`, `sandbox.spec.ts`, `webhook-signature.spec.ts`, `cron-schedule.spec.ts` |
+| Backoff, definition validation, sandbox, webhook signature, cron in time zones and on DST dates | `test/retry-backoff.spec.ts`, `definition.spec.ts`, `sandbox.spec.ts`, `webhook-signature.spec.ts`, `cron-schedule.spec.ts` |
 | N workers × M jobs, each exactly once | F-03 |
-| Worker killed mid-step: picked up, finished steps not repeated, side effect once | `test/integration/chaos/worker-killed-mid-step.int-spec.ts`, F-04, F-18 |
+| Worker killed mid-step: picked up, finished steps not repeated, side effect once | `integration/chaos/worker-killed-mid-step.int-spec.ts`, F-04, F-18 |
 | Two scheduler instances, one run | F-14, `scheduler/scheduling.int-spec.ts` |
 | Tenant A cannot see or change B, also bypassing services | `tenancy/row-level-security.int-spec.ts`, `tenancy/api-isolation.int-spec.ts`, F-01, F-02 |
 | SSRF, sandbox escape, webhook replay, changed body | `safe-http.spec.ts`, F-07, F-08, F-11, F-13 |
-| OpenAPI document matches the API | `api/openapi.int-spec.ts` |
+| OpenAPI document matches the API | `api/openapi.int-spec.ts` (routes, response fields, request bodies, query parameters, enums, status codes) |
 
 ### Chaos: all workers killed in the middle of a payment
 
@@ -505,11 +545,11 @@ The overlay adds `sink` (`docker/chaos/sink.js`), which applies each effect once
 holds the first `/charge` for 6 s and records notifications, and lets workers reach it through
 `SSRF_ALLOWLIST`. The script runs 10 executions of `reserve → charge → delay 2 s → email` with a
 notification endpoint, sends SIGKILL to both workers while charges are in flight, restarts them and
-exits with an error if any guarantee is broken. Result, the same on every run (Apple M1, Docker 8 CPUs):
+exits with an error if any guarantee is broken. Result, the same on every run except the time (three runs, Apple M1, Docker 8 CPUs):
 
 | Finished after the kill | Succeeded | reserve: attempts / requests / effects | charge | email | Notifications |
 |---|---|---|---|---|---|
-| 35.2–35.8 s | 10 / 10 | 10×1 / 10 / 10 | 2×1 + 8×2 / 18 / 10 | 10×1 / 10 / 10 | 10, all distinct ids |
+| 32.6–37.6 s | 10 / 10 | 10×1 / 10 / 10 | 2×1 + 8×2 / 18 / 10 | 10×1 / 10 / 10 | 10, all distinct ids |
 
 Killed jobs come back after the 30 s lease and the next reaper pass; interrupted charges ran again with
 the same key and were applied once; the reserve step was not repeated. With an idempotency key that
@@ -529,9 +569,9 @@ Docker 8 CPUs.
 | Claim order | B and C while A's backlog drains: p50 / p95 / p99, ms | After it drained: p95, ms |
 |---|---|---|
 | FIFO (baseline) | 16 161 / 31 139 / 32 115 | 238–243 |
-| Round-robin | 13–15 / 29 / 765–791 | 248–255 |
+| Round-robin | 14–16 / 32–45 / 720–742 | 244–258 |
 
-The backlog drained at 470 jobs/s on the current code and 622 jobs/s on the baseline, which also lacks
+The backlog drained at 489 jobs/s on the current code and 622 jobs/s on the baseline, which also lacks
 everything added after it (live update triggers, outbox, logging context, metrics, limits), so the
 difference is not the cost of the fair claim alone.
 
@@ -539,17 +579,34 @@ difference is not the cost of the fair claim alone.
 
 | File | Change | Reason |
 |---|---|---|
-| `apps/api/test/executions.service.spec.ts` | removed | could not fail (F-02), replaced by a real test |
-| `apps/api/test/job-queue.spec.ts` | removed two `it.todo` | implemented by F-03 and F-04 |
+| `apps/api/test/executions.service.spec.ts` (starter) | removed | could not fail (F-02), replaced by a real test |
+| `apps/api/test/job-queue.spec.ts` (starter) | removed two `it.todo` | implemented by F-03 and F-04 |
+| `findings/F-09-*` | 256 KiB output and a 64 KiB limit instead of 8 MB; the receiver removes its `drain`/`close` listeners | 8 MB timed out the transform limit under load; the listeners piled up on a slow socket |
+| `findings/F-12-*` | tampers with the signature header only | the F-13 fix added more headers that hid what F-12 checks |
+| `tenancy/tenant-limits.int-spec.ts` | no `429` expected among concurrent requests | the queue limit is soft by design |
+| `findings/F-20-*`, `execution/checkpoints`, `queue/lease` | wait for a state instead of a fixed time | fixed sleeps were flaky |
+| `apps/frontend/test/findings/F-22-*` | two assertions check connections and requests after failures | they passed whatever the page did |
+| `body-template.spec.ts` | JSON-looking `text/plain` and `application/jsonp` bodies are JSON | such bodies are escaped now |
+| `cron-schedule.spec.ts`, `sandbox.spec.ts`, `config.spec.ts`, `db/query-plans`, `outbox/notifications`, `observability/metrics`, `tenancy/row-level-security` | new names, settings, tables and plan checks | the behaviour they cover was extended |
+| `api/openapi.int-spec.ts`, `tenancy/admin-endpoint.int-spec.ts`, frontend route and page tests, `apps/frontend/test/workflow-form.test.ts` | Express 5 router, request built in one expression, Next.js 15 promise params, `validateWorkflow(values, original)` | framework upgrades, typed lint, the form follows the API rules |
+| `test/support/*` | `bodyParser: false`, workers start retention, role passwords from env, `SCHEDULER_TICK_MS` 59 s; the context closes workers and apps before it drops the database | built like `main.ts`; a tick must be shorter than the 60 s grace window; Jest runs `afterAll` hooks in declaration order, so the database was dropped under running workers |
+| `db/query-plans` (notifications by state) | `delivered` for a large tenant and for a tenant without such events, instead of `delivering` | `delivering` holds a few leased rows, for which the small lease index is a fine plan, so the test failed at random while missing the real problem |
+| `schedule-validation-cost.spec.ts`, `skipped-runs-cost.spec.ts` | count cron iterator steps (with a fake clock for the validation budget) instead of measuring milliseconds | wall-clock limits failed on the 2-CPU CI runner while proving nothing about the work done |
+| `apps/frontend/test/security-headers.test.ts` | typed `next.config.js`, `filter` instead of `find` | the frontend tests are type checked now |
 
 The other starter tests are unchanged and green.
 
 ## Not done, or done differently
 
-- An egress proxy in front of the workers as a second SSRF barrier.
-- Secrets encrypted with a KMS key.
-- `Idempotency-Key` for `POST /workflows/:id/run`; manual retry of failed executions; input for Run in
-  the UI.
+- An egress proxy as a second SSRF barrier; secrets encrypted with a KMS key.
+- `Idempotency-Key` for `POST /workflows/:id/run`; manual retry of failed executions; input for Run in the UI.
 - Weighted fairness or fairness by CPU time; `LISTEN/NOTIFY` wake-up instead of 250 ms polling.
-- The runtime image still contains `typescript` and `ts-node` (peer dependencies of TypeORM).
-- No dedicated test for fencing of notification delivery results.
+- The UI keeps the API key in an http-only 12-hour cookie instead of an opaque server-side session.
+- `set_tenant_limits` is not limited to a separate admin role (the application role can set any tenant
+  context anyway); limits are range checked by the database instead.
+- The workflow quota is one setting for all tenants, not part of `PATCH /tenants/:id/limits`.
+- Version garbage collection reads the version and workflow tables in full on each retention run.
+- Not measured: the effect of watched notifications on commit throughput; outbox in-flight limits can be
+  exceeded by one per dispatcher claiming at the same moment.
+- The runtime image still contains `typescript` and `ts-node` (peer dependencies of TypeORM); `typeorm`
+  0.3 pulls `glob`/`minimatch` with moderate advisories (CI fails on high and critical).

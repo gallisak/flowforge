@@ -10,7 +10,8 @@ export type StepDefinition =
 @Entity('workflows')
 @Check('CHK_workflows_missed_run_policy', `"missedRunPolicy" IN ('skip', 'once', 'all')`)
 @Index(['tenantId'])
-@Index('IDX_workflows_next_run_at', ['nextRunAt'], { where: '"nextRunAt" IS NOT NULL' })
+@Index('IDX_workflows_due', { synchronize: false })
+@Index('IDX_workflows_tenant_created', ['tenantId', 'createdAt', 'id'])
 export class Workflow {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -38,6 +39,9 @@ export class Workflow {
 
   @Column({ type: 'timestamptz', nullable: true })
   nextRunAt: Date | null;
+
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  scheduleRetryAt?: Date | null;
 
   @Column({ default: 1 })
   version: number;

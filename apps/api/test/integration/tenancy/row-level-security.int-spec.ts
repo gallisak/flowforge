@@ -1,6 +1,6 @@
 import { Client } from 'pg';
 import { hashApiKey } from '../../../src/auth/api-key.guard';
-import { Execution, Job, StepRun } from '../../../src/entities';
+import { Execution, Job, NotificationEndpoint, OutboxEvent, StepRun, WebhookSecret } from '../../../src/entities';
 import { useIntegrationContext } from '../../support/context';
 import { seedTenant, seedWorkflow, SeededTenant } from '../../support/db';
 
@@ -11,7 +11,14 @@ const TENANT_TABLES = [
   { table: 'executions', tenantColumn: 'tenantId' },
   { table: 'step_runs', tenantColumn: 'tenantId' },
   { table: 'jobs', tenantColumn: 'tenantId' },
+  { table: 'webhook_secrets', tenantColumn: 'tenantId' },
+  { table: 'notification_endpoints', tenantColumn: 'tenantId' },
+  { table: 'outbox_events', tenantColumn: 'tenantId' },
 ] as const;
+
+function protectedElsewhereTables() {
+  return [{ table: 'tenant_queue_state' }, { table: 'rate_limit_windows' }, { table: 'execution_watches' }];
+}
 
 describe('row level security for the application role (queries that bypass the service layer)', () => {
   const ctx = useIntegrationContext();
@@ -28,6 +35,14 @@ describe('row level security for the application role (queries that bypass the s
       .getRepository(StepRun)
       .save({ tenantId: seeded.tenant.id, executionId: execution.id, stepIndex: 0, stepId: 'hello' });
     await ctx.ds.getRepository(Job).save({ tenantId: seeded.tenant.id, executionId: execution.id });
+    await ctx.ds.getRepository(WebhookSecret).save({ tenantId: seeded.tenant.id, secret: `whsec_${seeded.tenant.name}`, purpose: 'inbound' });
+    await ctx.ds.getRepository(NotificationEndpoint).save({ tenantId: seeded.tenant.id, url: `https://${seeded.tenant.name}.example/hook` });
+    await ctx.ds.getRepository(OutboxEvent).save({
+      tenantId: seeded.tenant.id,
+      executionId: execution.id,
+      type: 'execution.succeeded',
+      payload: { output: seeded.tenant.name },
+    });
   }
 
   async function asTenant<T>(tenantId: string, work: () => Promise<T>): Promise<T> {
@@ -53,6 +68,24 @@ describe('row level security for the application role (queries that bypass the s
     app = new Client({ connectionString: ctx.db.url });
     await app.connect();
     ctx.onTeardown(() => app.end());
+  });
+
+  it('covers every table that holds tenant data', async () => {
+    const rows: Array<{ table: string }> = await ctx.ds.query(`
+      SELECT c.relname AS "table"
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relkind = 'r'
+         AND (c.relrowsecurity OR EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'tenantId' AND NOT a.attisdropped))
+       ORDER BY 1`);
+    const protectedElsewhere = ['tenant_queue_state', 'rate_limit_windows', 'execution_watches'];
+
+    expect(rows.map((row) => row.table).filter((table) => !protectedElsewhere.includes(table))).toEqual(
+      TENANT_TABLES.map(({ table }) => table).sort(),
+    );
+  });
+
+  it.each(protectedElsewhereTables())('keeps $table, which has no row level security, out of reach of the application role', async ({ table }) => {
+    await expect(app.query(`SELECT count(*) FROM "${table}"`)).rejects.toThrow(/permission denied/);
   });
 
   it.each(TENANT_TABLES)('sees no rows in $table without a tenant context', async ({ table }) => {

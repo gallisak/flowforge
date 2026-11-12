@@ -1,16 +1,25 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   api:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults: { run: { working-directory: apps/api } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version-file: .nvmrc, cache: npm, cache-dependency-path: apps/api/package-lock.json }
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run test:unit
@@ -18,12 +27,42 @@ jobs:
         run: npm run test:int
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults: { run: { working-directory: apps/frontend } }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version-file: .nvmrc, cache: npm, cache-dependency-path: apps/frontend/package-lock.json }
       - run: npm ci
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Create env files from the examples
+        run: |
+          cp apps/api/.env.example apps/api/.env
+          sed -e "s/^ADMIN_TOKEN=$/ADMIN_TOKEN=$(openssl rand -hex 32)/" \
+              -e "s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" \
+              -e "s/^FLOWFORGE_OWNER_PASSWORD=$/FLOWFORGE_OWNER_PASSWORD=$(openssl rand -hex 24)/" \
+              -e "s/^FLOWFORGE_APP_PASSWORD=$/FLOWFORGE_APP_PASSWORD=$(openssl rand -hex 24)/" \
+              .env.example > .env
+      - run: docker compose config --quiet
+      - run: docker compose -f docker-compose.yml -f docker-compose.chaos.yml config --quiet
+      - run: docker compose build
+      - name: Start the stack
+        run: docker compose up -d --wait --wait-timeout 180
+      - name: Smoke test
+        run: scripts/smoke.sh
+      - name: Logs of a failed run
+        if: failure()
+        run: docker compose logs --no-color --tail 300
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v

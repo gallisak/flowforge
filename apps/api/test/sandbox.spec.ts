@@ -1,7 +1,8 @@
+import { Worker } from 'worker_threads';
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from '../src/engine/sandbox/transform-sandbox';
 
 describe('TransformSandbox', () => {
-  const limits = { timeoutMs: 100, memoryBytes: 16 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES };
+  const limits = { timeoutMs: 100, memoryBytes: 16 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES, outputMaxBytes: 1024 * 1024 };
   let sandbox: TransformSandbox;
 
   beforeAll(() => {
@@ -116,5 +117,90 @@ describe('TransformSandbox', () => {
     await single.close();
     expect(await waiting).toMatchObject({ message: 'transform sandbox is shut down', retryable: true });
     expect(await running).toBeInstanceOf(TransformError);
+  });
+
+  it('rejects an oversized result inside the sandbox', async () => {
+    expect((await failureOf("'x'.repeat(2 * 1024 * 1024)")).message).toBe('step output exceeds 1048576 bytes');
+    expect((await failureOf("'\u00e9'.repeat(600 * 1024)")).message).toBe('step output exceeds 1048576 bytes');
+    await expect(sandbox.evaluate("'x'.repeat(1000).length", {})).resolves.toBe(1000);
+  });
+});
+
+describe('TransformSandbox with hostile thrown values', () => {
+  const limits = { timeoutMs: 100, memoryBytes: 16 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES, outputMaxBytes: 1024 * 1024 };
+  const hostileThrows = [
+    '(() => { throw Promise.resolve(1) })()',
+    '(() => { throw Promise.reject(1) })()',
+    '(() => { throw { get message() { throw 1 }, get name() { throw 2 } } })()',
+    '(() => { throw Symbol("x") })()',
+    '(() => { throw { toString() { throw 1 } } })()',
+  ];
+
+  it.each(hostileThrows)('reports %s as a failure of that transform only', async (expr) => {
+    const single = new TransformSandbox(limits, 1);
+    try {
+      const error = await single.evaluate(expr, {}).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(TransformError);
+      expect((error as TransformError).message).toMatch(/^transform failed/);
+      expect((error as TransformError).retryable).toBe(false);
+      await expect(single.evaluate('2 + 2', {})).resolves.toBe(4);
+    } finally {
+      await single.close();
+    }
+  });
+
+  it('never hands a broken thread to the transform waiting next in line', async () => {
+    const single = new TransformSandbox(limits, 1);
+    try {
+      const [attack, victims] = await Promise.all([
+        single.evaluate(hostileThrows[0], {}).catch((e: unknown) => e),
+        Promise.all(Array.from({ length: 3 }, (_, n) => single.evaluate('ctx.n + 1', { n }))),
+      ]);
+      expect(attack).toBeInstanceOf(TransformError);
+      expect(victims).toEqual([1, 2, 3]);
+    } finally {
+      await single.close();
+    }
+  });
+
+});
+
+describe('TransformSandbox result size', () => {
+  const limits = { timeoutMs: 1_000, memoryBytes: 64 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES, outputMaxBytes: 1024 * 1024 };
+  let sandbox: TransformSandbox;
+
+  beforeAll(() => {
+    sandbox = new TransformSandbox(limits, 1);
+  });
+
+  afterAll(async () => {
+    await sandbox.close();
+    jest.restoreAllMocks();
+  });
+
+  it('does not copy an oversized result to the host when the expression breaks out of its wrapper', async () => {
+    const copied: number[] = [];
+    const emit = Worker.prototype.emit;
+    jest.spyOn(Worker.prototype, 'emit').mockImplementation(function (this: Worker, event: string | symbol, ...args: unknown[]) {
+      const reply = args[0] as { output?: unknown; error?: unknown } | undefined;
+      if (event === 'message' && reply) copied.push(JSON.stringify(reply).length);
+      return emit.call(this, event, ...args);
+    });
+    const escape = '0); })(ctx)); return "J" + "1".repeat(5000000); ((function (ctx) { return (0';
+
+    const error = await sandbox.evaluate(escape, {}).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(TransformError);
+    expect(Math.max(...copied)).toBeLessThan(2 * 1024 * 1024);
+  });
+
+  it('cannot replace the serialisation the wrapper uses', async () => {
+    await expect(sandbox.evaluate('(JSON.stringify = () => "1".repeat(5000000), { ok: true })', {})).resolves.toEqual({ ok: true });
   });
 });

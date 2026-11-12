@@ -11,6 +11,8 @@ export interface WebhookSecretSummary {
   expiresAt: Date | null;
 }
 
+export const MAX_ACTIVE_SECRETS = 3;
+
 export function generateWebhookSecret(): string {
   return `whsec_${randomBytes(32).toString('base64')}`;
 }
@@ -42,13 +44,23 @@ export class WebhookSecretsService {
     return this.db.run(tenantId, async (em) => (await this.activeSecrets(em, tenantId, purpose)).map(summary));
   }
 
+  async lock(em: EntityManager, tenantId: string, purpose: SecretPurpose): Promise<void> {
+    await em.query(`SELECT pg_advisory_xact_lock(hashtextextended('webhook-secrets:' || $1 || ':' || $2, 0))`, [tenantId, purpose]);
+  }
+
   rotate(tenantId: string, purpose: SecretPurpose = 'inbound'): Promise<WebhookSecretSummary & { secret: string }> {
     return this.db.run(tenantId, async (em) => {
+      await this.lock(em, tenantId, purpose);
       const now = new Date();
       const graceEnds = new Date(now.getTime() + this.config.webhookSecretGraceSeconds * 1000);
       await em.delete(WebhookSecret, { tenantId, purpose, expiresAt: LessThanOrEqual(now) });
       await em.update(WebhookSecret, { tenantId, purpose, expiresAt: IsNull() }, { expiresAt: graceEnds });
       await em.update(WebhookSecret, { tenantId, purpose, expiresAt: MoreThan(graceEnds) }, { expiresAt: graceEnds });
+      await em.query(
+        `DELETE FROM webhook_secrets WHERE "tenantId" = $1 AND purpose = $2 AND id NOT IN (
+           SELECT id FROM webhook_secrets WHERE "tenantId" = $1 AND purpose = $2 ORDER BY "createdAt" DESC, id DESC LIMIT $3)`,
+        [tenantId, purpose, MAX_ACTIVE_SECRETS - 1],
+      );
       const created = await this.create(em, tenantId, purpose);
       return { ...summary(created), secret: created.secret };
     });

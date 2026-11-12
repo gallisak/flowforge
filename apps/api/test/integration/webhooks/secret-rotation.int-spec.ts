@@ -87,6 +87,25 @@ describe('webhook secret rotation', () => {
     expect(tenantSecrets).toHaveLength(0);
   });
 
+  it('keeps at most three secrets active, so a burst of rotations cannot slow down signature checks', async () => {
+    const rotated: string[] = [];
+    for (let i = 0; i < 6; i++) rotated.push((await rotate()).body.secret);
+
+    expect((await list()).body).toHaveLength(3);
+    await deliver(target.webhookSecret).expect(401);
+    await deliver(rotated[2]).expect(401);
+    await deliver(rotated[3]).expect(202);
+    await deliver(rotated[5]).expect(202);
+  });
+
+  it('keeps at most three outbound secrets, so the signature header of a notification stays small', async () => {
+    await request(server()).put('/notifications/endpoint').set('x-api-key', target.apiKey).send({ url: 'https://example.com/hook' }).expect(200);
+    for (let i = 0; i < 6; i++) await request(server()).post('/notifications/secrets').set('x-api-key', target.apiKey).expect(201);
+
+    const outbound = await request(server()).get('/notifications/secrets').set('x-api-key', target.apiKey).expect(200);
+    expect(outbound.body).toHaveLength(3);
+  });
+
   it('does not let another tenant see or revoke the secrets', async () => {
     const mine = ((await list()).body as Array<{ id: string }>)[0];
 

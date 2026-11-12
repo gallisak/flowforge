@@ -33,7 +33,15 @@ describe('F-09 step results have a size limit', () => {
       if (req.path === '/declared') res.writeHead(200, { 'content-length': String(50 * MB) });
       else res.writeHead(200, { 'content-type': 'text/plain' });
       for (let sent = 0; sent < 50 * MB && !res.destroyed; sent += chunk.length) {
-        if (!res.write(chunk)) await new Promise((resolve) => res.once('drain', resolve).once('close', resolve));
+        if (!res.write(chunk)) {
+          await new Promise<void>((resolve) => {
+            const resume = () => {
+              res.off('drain', resume).off('close', resume);
+              resolve();
+            };
+            res.once('drain', resume).once('close', resume);
+          });
+        }
         bytesSent += chunk.length;
       }
       res.end();

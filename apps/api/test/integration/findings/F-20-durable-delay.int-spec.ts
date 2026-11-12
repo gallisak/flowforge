@@ -93,8 +93,9 @@ describe('F-20 a delay step is a durable timer', () => {
       WORKER_LEASE_SECONDS: '2',
       WORKER_REAPER_INTERVAL_MS: '200',
     });
-    await eventually(() => expect(receiver.requests.some((r) => r.path === '/before')).toBe(true));
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await eventually(async () =>
+      expect(await ctx.ds.getRepository(StepRun).findOneBy({ executionId: execution.id, stepId: 'nap' })).toMatchObject({ status: 'waiting' }),
+    );
     await spawned.kill('SIGKILL');
     spawned = undefined;
 

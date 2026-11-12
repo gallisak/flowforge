@@ -4,7 +4,11 @@ import { DataSource } from 'typeorm';
 import { dataSourceOptions } from '../../../src/db/data-source';
 import { TenantDb } from '../../../src/db/tenant-db.service';
 import { StepRun, WorkflowVersion } from '../../../src/entities';
+import { ApiConfig } from '../../../src/config/config';
 import { ExecutionsService } from '../../../src/executions/executions.service';
+import { NotificationsService } from '../../../src/notifications/notifications.service';
+import { WebhookSecretsService } from '../../../src/webhooks/webhook-secrets.service';
+import { WorkflowsService } from '../../../src/workflows/workflows.service';
 import { useIntegrationContext } from '../../support/context';
 
 interface PlanNode {
@@ -13,6 +17,8 @@ interface PlanNode {
   'Index Name'?: string;
   'Actual Total Time'?: number;
   'Actual Rows'?: number;
+  'Actual Loops'?: number;
+  'Rows Removed by Filter'?: number;
   Plans?: PlanNode[];
 }
 
@@ -30,6 +36,7 @@ const EXPIRED_LEASES = 100;
 const SCHEDULED_WORKFLOWS = 1_000;
 const DUE_SCHEDULES = 20;
 const OUTBOX_EVENTS = 50_000;
+const SLEEPING_JOBS = 10_000;
 const PAGE_SIZE = 50;
 const LARGE_TABLES = ['jobs', 'executions', 'step_runs', 'outbox_events', 'workflows', 'workflow_versions'];
 
@@ -39,6 +46,7 @@ const sqlId = (prefix: string, expr: string) => `('${prefix}000000-0000-4000-800
 const TENANT_1 = idOf('00', 1);
 const WORKFLOW_1 = idOf('10', 1);
 const EXECUTION_OF_TENANT_1 = idOf('20', 30_001);
+const SLEEPING_TENANT = idOf('00', TENANTS + 1);
 
 function nodesOf(plan: PlanNode): PlanNode[] {
   return [plan, ...(plan.Plans ?? []).flatMap(nodesOf)];
@@ -53,6 +61,12 @@ function seqScansOfLargeTables(plans: CapturedPlan[]): string[] {
     .flatMap((p) => nodesOf(p.plan))
     .filter((n) => n['Node Type'] === 'Seq Scan' && LARGE_TABLES.includes(n['Relation Name'] ?? ''))
     .map((n) => n['Relation Name'] as string);
+}
+
+function rowsRemovedByFilter(plans: CapturedPlan[]): number {
+  return plans
+    .flatMap((p) => nodesOf(p.plan))
+    .reduce((sum, n) => sum + (n['Rows Removed by Filter'] ?? 0) * (n['Actual Loops'] ?? 1), 0);
 }
 
 function largestSortInput(plans: CapturedPlan[]): number {
@@ -139,6 +153,18 @@ describe('query plans of the hot paths on a realistically sized database', () =>
                CASE WHEN n > 2000 AND n <= 2200 THEN 'dispatcher-seed' END,
                CASE WHEN n > 2000 AND n <= 2200 THEN now() - interval '1 minute' END
           FROM (SELECT x.*, row_number() OVER (ORDER BY x."id") AS n FROM "executions" x WHERE x."status" <> 'pending' LIMIT ${OUTBOX_EVENTS}) e`);
+      await em.query(`INSERT INTO "tenants" ("id", "name", "apiKeyHash") VALUES ('${SLEEPING_TENANT}', 'sleeping', md5('sleeping'))`);
+      await em.query(`
+        INSERT INTO "executions" ("id", "tenantId", "workflowId", "status", "input")
+        SELECT ${sqlId('30', 'e')}, '${SLEEPING_TENANT}', '${WORKFLOW_1}', 'waiting', '{}'::jsonb FROM generate_series(1, ${SLEEPING_JOBS}) e`);
+      await em.query(`
+        INSERT INTO "jobs" ("tenantId", "executionId", "status", "runAt")
+        SELECT '${SLEEPING_TENANT}', ${sqlId('30', 'e')}, 'queued', now() + interval '1 hour' + e * interval '1 second'
+          FROM generate_series(1, ${SLEEPING_JOBS}) e`);
+      await em.query(`
+        INSERT INTO "outbox_events" ("tenantId", "executionId", "type", "payload", "status", "nextAttemptAt")
+        SELECT '${SLEEPING_TENANT}', ${sqlId('30', 'e')}, 'execution.failed', '{}'::jsonb, 'pending', now() + interval '1 hour'
+          FROM generate_series(1, ${SLEEPING_JOBS}) e`);
     });
     for (const table of ['tenants', ...LARGE_TABLES]) await ctx.ds.query(`VACUUM ANALYZE "${table}"`);
   }
@@ -167,7 +193,7 @@ describe('query plans of the hot paths on a realistically sized database', () =>
     });
     await runner.release();
     db = new TenantDb(app);
-    executions = new ExecutionsService(db, { tenantMaxQueuedJobs: 10_000 });
+    executions = new ExecutionsService(db, { tenantMaxQueuedJobs: 10_000, jobMaxAttempts: 8 });
   }, 120_000);
 
   afterAll(async () => {
@@ -191,6 +217,12 @@ describe('query plans of the hot paths on a realistically sized database', () =>
 
     expectIndexed(plans, 'IDX_jobs_queued_by_tenant');
     expect(indexesOf(plans).some((index) => index === 'IDX_jobs_running_by_tenant' || index === 'IDX_jobs_expired_leases')).toBe(true);
+  });
+
+  it('claims a job without reading the jobs that are not due yet', async () => {
+    const plans = await plansOf('claim a job', () => db.claimJob('worker-plans', 30, 10));
+
+    expect(rowsRemovedByFilter(plans)).toBeLessThan(1_000);
   });
 
   it('finds expired leases without scanning the jobs table', async () => {
@@ -233,15 +265,30 @@ describe('query plans of the hot paths on a realistically sized database', () =>
   });
 
   it('claims the next due schedule from the index of next runs', async () => {
-    const plans = await plansOf('claim a due schedule', () => db.claimDueSchedule(new Date(), [], async () => undefined));
+    const plans = await plansOf('claim a due schedule', () => db.claimDueSchedule(new Date(), async () => undefined));
 
-    expectIndexed(plans, 'IDX_workflows_next_run_at');
+    expectIndexed(plans, 'IDX_workflows_due');
   });
 
   it('claims due and abandoned notifications from their partial indexes', async () => {
-    const plans = await plansOf('claim outbox events', () => db.claimOutboxEvents('dispatcher-plans', 30, 10));
+    const plans = await plansOf('claim outbox events', () => db.claimOutboxEvents('dispatcher-plans', 30, 10, 2));
 
-    expectIndexed(plans, 'IDX_outbox_events_due', 'IDX_outbox_events_expired_leases');
+    expectIndexed(plans, 'IDX_outbox_events_pending_by_tenant', 'IDX_outbox_events_expired_leases');
+    expect(rowsRemovedByFilter(plans)).toBeLessThan(1_000);
+  });
+
+  it('lists the workflows of a tenant page by page from an index', async () => {
+    const workflows = new WorkflowsService(db, { tenantMaxWorkflows: 10_000 });
+    const first = await workflows.list(TENANT_1, { limit: 20 });
+    expect(first.nextCursor).not.toBeNull();
+
+    const plans = await plansOf('list workflows', async () => {
+      await workflows.list(TENANT_1, { limit: 20 });
+      await workflows.list(TENANT_1, { limit: 20, cursor: first.nextCursor ?? undefined });
+    });
+
+    expectIndexed(plans, 'IDX_workflows_tenant_created');
+    expect(largestSortInput(plans)).toBeLessThanOrEqual(21);
   });
 
   it('measures the queue depth per tenant from the partial indexes only', async () => {
@@ -249,5 +296,36 @@ describe('query plans of the hot paths on a realistically sized database', () =>
 
     expectIndexed(plans, 'IDX_jobs_queued_by_tenant');
     expect(indexesOf(plans).some((index) => index === 'IDX_jobs_running_by_tenant' || index === 'IDX_jobs_expired_leases')).toBe(true);
+  });
+
+  it.each([
+    ['a large tenant', TENANT_1],
+    ['a tenant without delivered notifications', SLEEPING_TENANT],
+  ])('lists the delivered notifications of %s from its own index without reading other tenants', async (_case, tenant) => {
+    const notifications = new NotificationsService(db, {} as WebhookSecretsService, { ssrfAllowlist: [] } as unknown as ApiConfig);
+    const plans = await plansOf('list notifications by status', () => notifications.events(tenant, { status: 'delivered', limit: 20 }));
+
+    expectIndexed(plans, 'IDX_outbox_events_tenant_status_created');
+    expect(rowsRemovedByFilter(plans)).toBeLessThan(100);
+    expect(largestSortInput(plans)).toBe(0);
+  });
+
+  it.each([
+    ['a large tenant', TENANT_1],
+    ['a tenant without delivered notifications', SLEEPING_TENANT],
+  ])('lists all notifications of %s from its own index without reading other tenants', async (_case, tenant) => {
+    const notifications = new NotificationsService(db, {} as WebhookSecretsService, { ssrfAllowlist: [] } as unknown as ApiConfig);
+    const plans = await plansOf('list notifications', () => notifications.events(tenant, { limit: 20 }));
+
+    expectIndexed(plans, 'IDX_outbox_events_tenant_created');
+    expect(rowsRemovedByFilter(plans)).toBeLessThan(100);
+    expect(largestSortInput(plans)).toBe(0);
+  });
+
+  it('finds finished executions and notifications to purge from their partial indexes', async () => {
+    const plans = await plansOf('purge finished data', () => db.purgeFinishedData(30, 1_000));
+
+    expect(indexesOf(plans)).toEqual(expect.arrayContaining(['IDX_executions_finished', 'IDX_outbox_events_finished']));
+    expect(seqScansOfLargeTables(plans).filter((table) => !['workflows', 'workflow_versions'].includes(table))).toEqual([]);
   });
 });
