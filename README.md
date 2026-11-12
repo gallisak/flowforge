@@ -510,7 +510,7 @@ index fails it. `QUERY_PLAN_REPORT=plans.md npx jest query-plans` writes the mea
 
 ```bash
 cd apps/api && npm ci && npm run lint && npm run typecheck
-npm run test:unit                # 410 tests, no database
+npm run test:unit                # 412 tests, no database
 npm run test:int                 # 384 tests, Postgres 16 via Testcontainers (Docker)
 cd ../frontend && npm ci && npm run lint && npm run typecheck && npm test && npm run build   # 95 tests
 cd ../.. && scripts/prove-finding.sh F-03    # red before the fix, green after it
@@ -591,6 +591,7 @@ difference is not the cost of the fair claim alone.
 | `api/openapi.int-spec.ts`, `tenancy/admin-endpoint.int-spec.ts`, frontend route and page tests, `apps/frontend/test/workflow-form.test.ts` | Express 5 router, request built in one expression, Next.js 15 promise params, `validateWorkflow(values, original)` | framework upgrades, typed lint, the form follows the API rules |
 | `test/support/*` | `bodyParser: false`, workers start retention, role passwords from env, `SCHEDULER_TICK_MS` 59 s; the context closes workers and apps before it drops the database | built like `main.ts`; a tick must be shorter than the 60 s grace window; Jest runs `afterAll` hooks in declaration order, so the database was dropped under running workers |
 | `db/query-plans` (notifications by state) | `delivered` for a large tenant and for a tenant without such events, instead of `delivering` | `delivering` holds a few leased rows, for which the small lease index is a fine plan, so the test failed at random while missing the real problem |
+| `schedule-validation-cost.spec.ts`, `skipped-runs-cost.spec.ts` | count cron iterator steps (with a fake clock for the validation budget) instead of measuring milliseconds | wall-clock limits failed on the 2-CPU CI runner while proving nothing about the work done |
 | `apps/frontend/test/security-headers.test.ts` | typed `next.config.js`, `filter` instead of `find` | the frontend tests are type checked now |
 
 The other starter tests are unchanged and green.

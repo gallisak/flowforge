@@ -1,13 +1,27 @@
+import { parseExpression } from 'cron-parser';
 import { timezoneCacheSize, utcOffsetMs } from '../src/scheduler/zoned-cron';
 import { validateSchedule } from '../src/workflows/schedule';
 
 describe('cost of schedule validation', () => {
-  it('validates a sparse cron in a time zone with half-hour changes in a few milliseconds', () => {
-    validateSchedule('0 0 1 1 *', 'UTC');
-    const started = performance.now();
-    for (let i = 0; i < 5; i++) validateSchedule('59 59 23 29 2 *', 'Australia/Lord_Howe');
+  const cronSteps = jest.spyOn(Object.getPrototypeOf(parseExpression('* * * * *')), 'next');
 
-    expect((performance.now() - started) / 5).toBeLessThan(60);
+  function stepsToValidate(msPerClockRead: number): number {
+    let clock = 0;
+    const now = jest.spyOn(performance, 'now').mockImplementation(() => (clock += msPerClockRead));
+    cronSteps.mockClear();
+    try {
+      validateSchedule('59 59 23 29 2 *', 'Australia/Lord_Howe');
+    } finally {
+      now.mockRestore();
+    }
+    return cronSteps.mock.calls.length;
+  }
+
+  afterAll(() => cronSteps.mockRestore());
+
+  it('stops sampling a sparse cron once its time budget is spent', () => {
+    expect(stepsToValidate(0)).toBe(10);
+    expect(stepsToValidate(25)).toBe(2);
   });
 });
 
