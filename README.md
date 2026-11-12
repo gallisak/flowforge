@@ -162,8 +162,8 @@ flowchart TD
   `app.tenant_id`, set per transaction by `TenantDb.run`; cross-tenant work (key lookup, webhook routing,
   claims, reaper, retention, metrics) goes through narrow `SECURITY DEFINER` functions; services also
   filter by `tenantId`. The application role cannot change `migrations`, `workflow_versions` or `tenants`.
-- **Limits per tenant** (`PATCH /tenants/:id/limits`, range checked in the database): concurrent jobs
-  (in `claim_job`, exact), ready jobs in the queue (`429` + `Retry-After`), requests per minute (fixed
+- **Limits per tenant** (`PATCH /tenants/:id/limits`, range checked in the database): concurrent jobs, that is
+  running executions (in `claim_job`, exact; a sleeping `delay` does not count), ready jobs in the queue (`429` + `Retry-After`), requests per minute (fixed
   window in Postgres, `X-RateLimit-*`), workflows (`TENANT_MAX_WORKFLOWS`). Failed authentication is
   limited per address in memory before any database work (`AUTH_FAILURES_PER_MINUTE`).
 - **Why:** a missing check in code still cannot leak data (`tenancy/row-level-security.int-spec.ts`).
@@ -371,7 +371,7 @@ part of F-18.
 ### F-18 · A retry repeats steps that already succeeded · Execution properties · Critical
 - **What:** `src/engine/job-runner.service.ts:60-64` starts from step 0 on every attempt; `:56-91` updates three tables in separate statements.
 - **Why dangerous:** a failure in a later step repeats earlier side effects; a crash between statements leaves, for example, a `succeeded` execution with a `running` job.
-- **Reproduce:** `test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts` proves the repeated steps. The non-atomic transitions (F-21) are not reproduced by a test of their own: the fix removes them by construction (each transition is one fenced transaction), and `outbox/notifications.int-spec.ts` shows that a failing write leaves no half-finished state.
+- **Reproduce:** `test/integration/findings/F-18-resume-from-checkpoint.int-spec.ts` proves the repeated steps. The non-atomic transitions (F-21) are proven by mutation: `scripts/mutation/starter-defects.sh non-atomic-completion` splits the completion back into two transactions as in the starter, and `outbox/notifications.int-spec.ts` ("same transaction as the final state"), green on the current code, fails because the job is `done` while the execution is not.
 - **Fix** (`b02e231`): fenced per-step checkpoints, one transaction per transition, idempotency keys.
 - **Alternatives:** event sourcing; requiring idempotent steps from users.
 
@@ -470,17 +470,18 @@ review`, `... second code review`, `... third code review`. The main ones:
 
 ### Starter defects fixed without a reproduction
 
-These were fixed while building a feature, before a red test existed; they are listed for completeness.
+These were fixed while building a feature, so no commit holds a red test for them. They are proven by
+mutation instead: `scripts/mutation/starter-defects.sh [mutant]` copies the app, checks that the test
+passes, puts the starter defect back and requires the same test to fail (all six mutants are killed).
 
-- **No database timeouts** (`src/app.module.ts:18-23`): a paused Postgres made every request hang.
-  Fixed in `987ffa7` (connect, statement and client timeouts); covered by `test/integration/db/timeouts.int-spec.ts`.
-- **The admin token was checked after the body was validated** (`src/tenants/tenants.controller.ts:27-31`):
-  anyone could learn the shape of the admin API from `400` answers. Fixed in `987ffa7` (a guard runs
-  first); covered by `test/integration/tenancy/admin-endpoint.int-spec.ts`.
-- **The frontend proxy had no timeout and no path check, and `/api/connect` did not check the origin**
-  (starter `apps/frontend/app/api/proxy/[...path]/route.ts`): another site could post its own key to
-  `/api/connect` (login CSRF) and the user would act in the attacker's tenant. Fixed in `24bcf46`;
-  covered by `apps/frontend/test/proxy-route.test.ts` and `apps/frontend/test/connect-route.test.ts`.
+| Defect (starter) | Why dangerous | Fix | Test · mutant | Alternative |
+|---|---|---|---|---|
+| No database timeouts (`src/app.module.ts:18-23`) · Resources · High | a paused or locked Postgres makes every request and worker hang | `987ffa7`: connect, statement and client timeouts | `db/timeouts.int-spec.ts` · `database-timeouts` | timeouts per query |
+| Admin token checked after the body was validated (`src/tenants/tenants.controller.ts:27-31`) · Security · Low | anyone learns the admin API from `400` answers | `987ffa7`: a guard runs before validation | `tenancy/admin-endpoint.int-spec.ts` · `admin-token-after-validation` | a separate admin port |
+| Frontend proxy without a deadline (`apps/frontend/app/api/proxy/[...path]/route.ts`) · Resources · Medium | a hanging API holds frontend requests forever | `24bcf46`: `AbortSignal.timeout`, `504` | `apps/frontend/test/proxy-route.test.ts` · `proxy-without-timeout` | a timeout in the reverse proxy |
+| Frontend proxy forwards any path segment (same file) · Security · Medium | `..` or encoded segments reach API routes the UI never calls | `24bcf46`: segments must match `[A-Za-z0-9_-]+` | `proxy-route.test.ts` · `proxy-without-path-check` | an allowlist of routes |
+| `/api/connect` without an origin check (`apps/frontend/app/api/connect/route.ts`) · Security · Medium | another site posts its own key (login CSRF), the user then acts in the attacker's tenant | `24bcf46`: `Origin` must match | `connect-route.test.ts` · `connect-without-origin-check` | a CSRF token |
+| Non-atomic transitions (F-21, part of [F-18](#f-18--a-retry-repeats-steps-that-already-succeeded--execution-properties--critical)) | a crash between statements leaves a `done` job with a `running` execution | `b02e231`: one fenced transaction per transition | `outbox/notifications.int-spec.ts` · `non-atomic-completion` | — |
 
 ## Indexes and query plans
 
@@ -511,13 +512,14 @@ npm run test:unit                # 410 tests, no database
 npm run test:int                 # 381 tests, Postgres 16 via Testcontainers (Docker)
 cd ../frontend && npm ci && npm run lint && npm test && npm run build   # 93 tests
 cd ../.. && scripts/prove-finding.sh F-03    # red before the fix, green after it
+scripts/mutation/starter-defects.sh          # starter defects without a red commit, by mutation
 ```
 
 Each integration test file gets its own database cloned from a migrated template. `TEST_DATABASE_URL`
 (a superuser URL) uses an existing server instead of a container: it drops and recreates `ff_template`,
 `ff_template_empty` and `ff_t_*` databases, needs `psql` on the host, and creates the roles with
 `TEST_OWNER_PASSWORD`/`TEST_APP_PASSWORD` (default: the role names) if they are missing. CI runs all of
-the above except `prove-finding.sh`, audits production dependencies, builds the images, starts the stack
+the above except `prove-finding.sh` and the mutation scripts, audits production dependencies, builds the images, starts the stack
 and runs `scripts/smoke.sh`.
 
 | Requirement (task 6) | Tests |
