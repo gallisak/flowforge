@@ -1,13 +1,24 @@
+x-database-urls:
+  app: &app-database-url postgres://flowforge_app:${FLOWFORGE_APP_PASSWORD:?set FLOWFORGE_APP_PASSWORD in .env}@postgres:5432/flowforge
+  owner: &owner-database-url postgres://flowforge_owner:${FLOWFORGE_OWNER_PASSWORD:?set FLOWFORGE_OWNER_PASSWORD in .env}@postgres:5432/flowforge
+
+x-ops-healthcheck: &ops-healthcheck
+  test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
+  interval: 5s
+  timeout: 3s
+  retries: 6
+  start_period: 10s
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: flowforge
-      POSTGRES_PASSWORD: flowforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: flowforge
-      FLOWFORGE_OWNER_PASSWORD: ${FLOWFORGE_OWNER_PASSWORD:-flowforge_owner}
-      FLOWFORGE_APP_PASSWORD: ${FLOWFORGE_APP_PASSWORD:-flowforge_app}
-    ports: ['${PG_PORT:-5432}:5432']
+      FLOWFORGE_OWNER_PASSWORD: ${FLOWFORGE_OWNER_PASSWORD:?set FLOWFORGE_OWNER_PASSWORD in .env}
+      FLOWFORGE_APP_PASSWORD: ${FLOWFORGE_APP_PASSWORD:?set FLOWFORGE_APP_PASSWORD in .env}
+    ports: ['127.0.0.1:${PG_PORT:-5432}:5432']
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -20,39 +31,44 @@ services:
   migrate:
     build: ./apps/api
     command: ['node', 'dist/migrate']
-    env_file: ./apps/api/.env.example
+    env_file: ./apps/api/.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ''
+      MIGRATION_DATABASE_URL: *owner-database-url
+      ADMIN_TOKEN: ''
     depends_on:
       postgres: { condition: service_healthy }
     restart: 'no'
 
   api:
     build: ./apps/api
-    env_file: ./apps/api/.env.example
+    env_file: ./apps/api/.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: *app-database-url
+      MIGRATION_DATABASE_URL: ''
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env to a random secret of at least 32 characters}
     depends_on:
       migrate: { condition: service_completed_successfully }
     init: true
-    ports: ['${API_PORT:-3000}:3000']
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
-      interval: 5s
-      timeout: 3s
-      retries: 6
-      start_period: 10s
+    ports: ['127.0.0.1:${API_PORT:-3000}:3000']
+    healthcheck: *ops-healthcheck
 
   worker:
     build: ./apps/api
     command: ['node', 'dist/worker']
     init: true
     stop_grace_period: 30s
-    env_file: ./apps/api/.env.example
+    env_file: ./apps/api/.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: *app-database-url
+      MIGRATION_DATABASE_URL: ''
+      ADMIN_TOKEN: ''
     depends_on:
       migrate: { condition: service_completed_successfully }
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
-      interval: 5s
-      timeout: 3s
-      retries: 6
-      start_period: 10s
+    healthcheck: *ops-healthcheck
     deploy:
       replicas: 2
 
@@ -61,15 +77,15 @@ services:
     command: ['node', 'dist/scheduler']
     init: true
     stop_grace_period: 30s
-    env_file: ./apps/api/.env.example
+    env_file: ./apps/api/.env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: *app-database-url
+      MIGRATION_DATABASE_URL: ''
+      ADMIN_TOKEN: ''
     depends_on:
       migrate: { condition: service_completed_successfully }
-    healthcheck:
-      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
-      interval: 5s
-      timeout: 3s
-      retries: 6
-      start_period: 10s
+    healthcheck: *ops-healthcheck
     deploy:
       replicas: 2
 
@@ -80,7 +96,13 @@ services:
     depends_on:
       api: { condition: service_healthy }
     init: true
-    ports: ['${WEB_PORT:-3001}:3000']
+    ports: ['127.0.0.1:${WEB_PORT:-3001}:3000']
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/health || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
 
 volumes:
   pgdata:

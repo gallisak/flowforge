@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 import { metrics } from './metrics';
@@ -11,7 +12,9 @@ export function correlationIdFrom(header: unknown): string {
   return typeof header === 'string' && VALID_CORRELATION_ID.test(header) ? header : randomUUID();
 }
 
-type RequestWithId = Request & { correlationId?: string };
+type RequestWithId = Request & { correlationId?: string; tenant?: { id: string } };
+
+const requestLogger = new Logger('HTTP');
 
 export function assignRequestId(req: RequestWithId, res: Response, next: NextFunction): void {
   req.correlationId = correlationIdFrom(req.headers[REQUEST_ID_HEADER]);
@@ -19,10 +22,17 @@ export function assignRequestId(req: RequestWithId, res: Response, next: NextFun
   const started = process.hrtime.bigint();
   res.on('finish', () => {
     const route = req.route?.path ? `${req.baseUrl}${req.route.path}` : 'unmatched';
-    metrics.httpRequestDuration.observe(
-      { method: req.method, route, status_code: String(res.statusCode) },
-      Number(process.hrtime.bigint() - started) / 1e9,
-    );
+    const seconds = Number(process.hrtime.bigint() - started) / 1e9;
+    metrics.httpRequestDuration.observe({ method: req.method, route, status_code: String(res.statusCode) }, seconds);
+    requestLogger.log({
+      msg: 'request completed',
+      method: req.method,
+      route,
+      status: res.statusCode,
+      durationMs: Math.round(seconds * 1000),
+      correlationId: req.correlationId,
+      ...(req.tenant ? { tenantId: req.tenant.id } : {}),
+    });
   });
   next();
 }

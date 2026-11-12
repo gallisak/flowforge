@@ -1,9 +1,14 @@
 import { execSync } from 'child_process';
 import { join } from 'path';
+import { fromEnvOrRootEnvFile } from '../support/root-env';
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3000';
 const SINK_URL = process.env.SINK_URL ?? 'http://localhost:18080';
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'change-me-admin';
+const ADMIN_TOKEN = fromEnvOrRootEnvFile('ADMIN_TOKEN');
+if (!ADMIN_TOKEN) {
+  process.stderr.write('Set ADMIN_TOKEN in the .env file at the repository root, or in the environment\n');
+  process.exit(2);
+}
 const COMPOSE = process.env.COMPOSE ?? 'docker compose -p flowforge -f docker-compose.yml -f docker-compose.chaos.yml';
 const EXECUTIONS = Number(process.env.EXECUTIONS ?? 10);
 const REPO_ROOT = join(__dirname, '..', '..', '..', '..');

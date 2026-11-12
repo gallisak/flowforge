@@ -21,6 +21,9 @@ import { ExecutionListIndexes1794321000000 } from './1794321000000-execution-lis
 import { ExecutionWorkflowStatistics1794321100000 } from './1794321100000-execution-workflow-statistics';
 import { ReaperReleasesInterruptedSteps1794321200000 } from './1794321200000-reaper-releases-interrupted-steps';
 import { LongerTriggerKeys1794321300000 } from './1794321300000-longer-trigger-keys';
+import { PostponedSchedules1794321400000 } from './1794321400000-postponed-schedules';
+import { TenantAwareClaims1794321500000 } from './1794321500000-tenant-aware-claims';
+import { LeastPrivilegeGrants1794321600000 } from './1794321600000-least-privilege-grants';
 
 export const migrations = [
   Baseline1794305090749,
@@ -46,4 +49,7 @@ export const migrations = [
   ExecutionWorkflowStatistics1794321100000,
   ReaperReleasesInterruptedSteps1794321200000,
   LongerTriggerKeys1794321300000,
+  PostponedSchedules1794321400000,
+  TenantAwareClaims1794321500000,
+  LeastPrivilegeGrants1794321600000,
 ];

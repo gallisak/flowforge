@@ -165,17 +165,36 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "description": "Value of `X-Next-Cursor` from the previous page."
           }
         ],
         "responses": {
           "200": {
-            "description": "Workflows of the tenant, newest first.",
+            "description": "One page of workflows of the tenant, newest first, without their steps.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Workflow"
+                    "$ref": "#/components/schemas/WorkflowSummary"
                   }
                 }
               }
@@ -192,6 +211,9 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/RateLimitReset"
+              },
+              "X-Next-Cursor": {
+                "$ref": "#/components/headers/NextCursor"
               }
             }
           },
@@ -200,6 +222,9 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           }
         },
         "operationId": "listWorkflows"
@@ -255,6 +280,16 @@
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "403": {
+            "description": "The tenant already has `TENANT_MAX_WORKFLOWS` workflows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -579,13 +614,13 @@
         ],
         "responses": {
           "200": {
-            "description": "One page, newest first.",
+            "description": "One page, newest first, without input and output.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/Execution"
+                    "$ref": "#/components/schemas/ExecutionSummary"
                   }
                 }
               }
@@ -740,7 +775,7 @@
         ],
         "summary": "Receive a signed webhook",
         "security": [],
-        "description": "Standard Webhooks signature: `webhook-signature: v1,<base64 HMAC-SHA256(secret, webhook-id + \".\" + webhook-timestamp + \".\" + raw body)>`, several space-separated signatures allowed. The timestamp must be within WEBHOOK_TOLERANCE_SECONDS of the server time. Every redelivery with the same `webhook-id` returns the existing execution. An unknown or disabled workflow and a bad signature get the same 401.",
+        "description": "Standard Webhooks signature: `webhook-signature: v1,<base64 HMAC-SHA256(secret, webhook-id + \".\" + webhook-timestamp + \".\" + raw body)>`, several space-separated signatures allowed. The timestamp must be within WEBHOOK_TOLERANCE_SECONDS of the server time. Every redelivery with the same `webhook-id` returns the existing execution. An unknown or disabled workflow and a bad signature get the same 401. Compressed bodies are refused, because the signature covers the bytes as they arrive.",
         "parameters": [
           {
             "name": "workflowId",
@@ -830,7 +865,7 @@
             "$ref": "#/components/responses/PayloadTooLarge"
           },
           "415": {
-            "description": "The body is not application/json.",
+            "description": "The body is not application/json, or it is compressed (`Content-Encoding`); the signature is checked over the bytes as they arrive.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1063,7 +1098,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The endpoint; the first call also returns the outbound signing secret once.",
+            "description": "The endpoint; returns the outbound signing secret once, when it is created.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1093,7 +1128,14 @@
             "$ref": "#/components/responses/TooManyRequests"
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest"
+            "description": "Invalid url, or a url whose host is an address that is not on the public internet (loopback, private ranges, link-local, cloud metadata). Such a notification could never be delivered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1137,6 +1179,9 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         },
         "operationId": "removeNotificationEndpoint"
@@ -1381,6 +1426,87 @@
           }
         },
         "operationId": "readiness"
+      }
+    },
+    "/notifications/events": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "List recent notifications and their delivery state",
+        "description": "Shows notifications that are still pending or were given up (`dead`), with the last error, so a tenant can see why its endpoint received nothing. The payload is not returned.",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "delivering",
+                "delivered",
+                "dead"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NotificationEvent"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/RateLimitLimit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/RateLimitRemaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/RateLimitReset"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          }
+        },
+        "operationId": "listNotificationEvents"
       }
     }
   },
@@ -1717,7 +1843,6 @@
       },
       "UpdateWorkflow": {
         "type": "object",
-        "minProperties": 1,
         "description": "Changing `steps` creates a new version. Running executions keep the version they started with.",
         "properties": {
           "name": {
@@ -2183,7 +2308,7 @@
           },
           "secret": {
             "type": "string",
-            "description": "Present only on the first PUT, which creates the outbound signing secret."
+            "description": "Returned by a PUT when the tenant has no active outbound signing secret yet (usually the first one), which then creates it. Shown only once."
           }
         }
       },
@@ -2241,6 +2366,216 @@
           },
           "finishedAt": {
             "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WorkflowSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "tenantId",
+          "name",
+          "enabled",
+          "cron",
+          "timezone",
+          "missedRunPolicy",
+          "nextRunAt",
+          "version",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "missedRunPolicy": {
+            "$ref": "#/components/schemas/MissedRunPolicy"
+          },
+          "nextRunAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Next scheduled run, `null` without a schedule or while disabled."
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "description": "A workflow as it appears in lists, without its steps; read one workflow for its steps."
+      },
+      "ExecutionSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "tenantId",
+          "workflowId",
+          "workflowVersion",
+          "status",
+          "error",
+          "trigger",
+          "triggerKey",
+          "correlationId",
+          "createdAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tenantId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "workflowVersion": {
+            "type": "integer",
+            "description": "The version snapshot this execution runs."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExecutionStatus"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "api",
+              "webhook",
+              "cron"
+            ]
+          },
+          "triggerKey": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`webhook:<workflowId>:<webhook-id>` or `cron:<workflowId>:<scheduled time>`; unique per tenant, so a redelivered webhook or a second scheduler never creates a second execution."
+          },
+          "correlationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Request id of the trigger; passed to every step, outgoing request and notification."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        },
+        "description": "An execution as it appears in lists, without its input and output; read one execution for them."
+      },
+      "NotificationEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "executionId",
+          "type",
+          "status",
+          "attempts",
+          "lastError",
+          "lastStatusCode",
+          "nextAttemptAt",
+          "createdAt",
+          "deliveredAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Sent as `webhook-id`; the same on every attempt."
+          },
+          "executionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "execution.succeeded",
+              "execution.failed"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "delivering",
+              "delivered",
+              "dead"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastStatusCode": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "nextAttemptAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deliveredAt": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time"
           }
         }

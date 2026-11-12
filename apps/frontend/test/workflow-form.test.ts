@@ -37,12 +37,21 @@ describe('validateWorkflow', () => {
     ['an unknown type', [{ id: 'a', type: 'email' }], /must have a type of/],
     ['an http step without url', [{ id: 'a', type: 'http' }], 'Step 1 needs a url'],
     ['headers that are not text', [{ id: 'a', type: 'http', url: 'https://x.test', headers: { n: 1 } }], 'Step 1 must have headers with text values'],
-    ['a delay that is not whole', [{ id: 'a', type: 'delay', ms: 1.5 }], 'Step 1 needs a positive whole number of milliseconds'],
-    ['a transform without expression', [{ id: 'a', type: 'transform', expr: ' ' }], 'Step 1 needs an expression'],
+    ['a negative delay', [{ id: 'a', type: 'delay', ms: -1 }], 'Step 1 needs a number of milliseconds from 0 to 3600000'],
+    ['a delay above one hour', [{ id: 'a', type: 'delay', ms: 3_600_001 }], 'Step 1 needs a number of milliseconds from 0 to 3600000'],
+    ['a transform without expression', [{ id: 'a', type: 'transform' }], 'Step 1 needs an expression'],
   ])('rejects steps with %s', (_case, steps, message) => {
     const error = stepsError(steps);
     if (typeof message === 'string') expect(error).toBe(message);
     else expect(error).toMatch(message);
+  });
+
+  it.each([
+    ['a delay of zero', [{ id: 'a', type: 'delay', ms: 0 }]],
+    ['a fractional delay', [{ id: 'a', type: 'delay', ms: 1.5 }]],
+    ['an empty transform expression', [{ id: 'a', type: 'transform', expr: '' }]],
+  ])('accepts steps the API accepts: %s', (_case, steps) => {
+    expect(stepsError(steps)).toBeUndefined();
   });
 });
 

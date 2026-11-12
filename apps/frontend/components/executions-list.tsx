@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { apiRequest } from '@/lib/api-client';
 import { ApiError } from '@/lib/api-error';
 import { formatDateTime, formatDuration, shortId } from '@/lib/format';
-import { EXECUTION_STATUSES, ExecutionDto, WorkflowDto } from '@/lib/types';
+import { EXECUTION_STATUSES, ExecutionSummaryDto, WorkflowSummaryDto } from '@/lib/types';
 
 export const PAGE_SIZE = 20;
 const ANY = 'any';
@@ -37,11 +37,11 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
   const filters = useMemo<ExecutionFilters>(() => ({ status: given.status, workflowId: given.workflowId }), [given.status, given.workflowId]);
   const router = useRouter();
   const pathname = usePathname();
-  const [items, setItems] = useState<ExecutionDto[]>([]);
+  const [items, setItems] = useState<ExecutionSummaryDto[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
   const [failure, setFailure] = useState<ApiError | null>(null);
-  const [workflows, setWorkflows] = useState<WorkflowDto[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowSummaryDto[]>([]);
   const inFlight = useRef<AbortController | null>(null);
 
   const load = useCallback(
@@ -52,7 +52,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
       setPhase(cursor ? 'loading-more' : 'loading');
       setFailure(null);
       try {
-        const { data, headers } = await apiRequest<ExecutionDto[]>(`/executions?${queryOf(filters, cursor)}`, { signal: controller.signal });
+        const { data, headers } = await apiRequest<ExecutionSummaryDto[]>(`/executions?${queryOf(filters, cursor)}`, { signal: controller.signal });
         if (controller.signal.aborted) return;
         setItems((current) => (cursor ? [...current, ...data] : data));
         setNextCursor(headers.get('x-next-cursor'));
@@ -73,7 +73,7 @@ export function ExecutionsList({ filters: given }: { filters: ExecutionFilters }
 
   useEffect(() => {
     const controller = new AbortController();
-    apiRequest<WorkflowDto[]>('/workflows', { signal: controller.signal }).then(
+    apiRequest<WorkflowSummaryDto[]>('/workflows?limit=200', { signal: controller.signal }).then(
       ({ data }) => setWorkflows(data),
       () => undefined,
     );

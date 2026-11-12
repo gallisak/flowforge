@@ -12,7 +12,8 @@ export interface ObservabilityConfig {
 
 export interface OutboxConfig {
   pollIntervalMs: number;
-  batchSize: number;
+  concurrency: number;
+  tenantConcurrency: number;
   leaseSeconds: number;
   maxAttempts: number;
   retryBaseMs: number;
@@ -32,6 +33,8 @@ export interface ApiConfig extends ObservabilityConfig {
   webhookSecretGraceSeconds: number;
   tenantRateLimitPerMinute: number;
   tenantMaxQueuedJobs: number;
+  tenantMaxWorkflows: number;
+  ssrfAllowlist: readonly string[];
 }
 
 export interface WorkerConfig extends ObservabilityConfig {
@@ -62,6 +65,7 @@ export interface SchedulerConfig extends ObservabilityConfig {
   schedulerTickMs: number;
   schedulerMisfireGraceMs: number;
   schedulerMaxCatchUpRuns: number;
+  schedulerPostponeMs: number;
   tenantMaxQueuedJobs: number;
 }
 
@@ -69,14 +73,22 @@ export interface QueueLimits {
   tenantMaxQueuedJobs: number;
 }
 
+export interface WorkflowLimits {
+  tenantMaxWorkflows: number;
+}
+
 export interface MigrationConfig {
   migrationDatabaseUrl: string;
+  connectTimeoutMs: number;
+  statementTimeoutMs: number;
+  lockTimeoutMs: number;
 }
 
 export const API_CONFIG = Symbol('API_CONFIG');
 export const WORKER_CONFIG = Symbol('WORKER_CONFIG');
 export const SCHEDULER_CONFIG = Symbol('SCHEDULER_CONFIG');
 export const QUEUE_LIMITS = Symbol('QUEUE_LIMITS');
+export const WORKFLOW_LIMITS = Symbol('WORKFLOW_LIMITS');
 
 export class ConfigError extends Error {
   constructor(readonly problems: string[]) {
@@ -178,7 +190,8 @@ class EnvReader {
     if (timeoutMs >= leaseSeconds * 1_000) this.problems.push('OUTBOX_TIMEOUT_MS must be shorter than OUTBOX_LEASE_SECONDS');
     return {
       pollIntervalMs: this.integer('OUTBOX_POLL_INTERVAL_MS', 1_000, 50, 60_000),
-      batchSize: this.integer('OUTBOX_BATCH_SIZE', 10, 1, 100),
+      concurrency: this.integer('OUTBOX_CONCURRENCY', 10, 1, 100),
+      tenantConcurrency: this.integer('OUTBOX_TENANT_CONCURRENCY', 2, 1, 100),
       leaseSeconds,
       maxAttempts: this.integer('OUTBOX_MAX_ATTEMPTS', 15, 1, 100),
       retryBaseMs,
@@ -219,6 +232,8 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     webhookSecretGraceSeconds: read.integer('WEBHOOK_SECRET_GRACE_SECONDS', 86_400, 0, 2_592_000),
     tenantRateLimitPerMinute: read.integer('TENANT_RATE_LIMIT_PER_MINUTE', 600, 1, 1_000_000),
     tenantMaxQueuedJobs: read.integer('TENANT_MAX_QUEUED_JOBS', 10_000, 1, 10_000_000),
+    tenantMaxWorkflows: read.integer('TENANT_MAX_WORKFLOWS', 1_000, 1, 1_000_000),
+    ssrfAllowlist: read.allowlist('SSRF_ALLOWLIST'),
   });
 }
 
@@ -232,6 +247,7 @@ export function loadSchedulerConfig(env: Env = process.env): SchedulerConfig {
     schedulerTickMs: read.integer('SCHEDULER_TICK_MS', 5_000, 1_000, 3_600_000),
     schedulerMisfireGraceMs: read.integer('SCHEDULER_MISFIRE_GRACE_MS', 60_000, 1_000, 3_600_000),
     schedulerMaxCatchUpRuns: read.integer('SCHEDULER_MAX_CATCH_UP_RUNS', 100, 1, 1_000),
+    schedulerPostponeMs: read.integer('SCHEDULER_POSTPONE_MS', 30_000, 100, 3_600_000),
     tenantMaxQueuedJobs: read.integer('TENANT_MAX_QUEUED_JOBS', 10_000, 1, 10_000_000),
   });
 }
@@ -266,7 +282,12 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
 
 export function loadMigrationConfig(env: Env = process.env): MigrationConfig {
   const read = new EnvReader(env);
-  return read.done({ migrationDatabaseUrl: read.postgresUrl('MIGRATION_DATABASE_URL') });
+  return read.done({
+    migrationDatabaseUrl: read.postgresUrl('MIGRATION_DATABASE_URL'),
+    connectTimeoutMs: read.integer('DB_CONNECT_TIMEOUT_MS', 5_000, 100, 120_000),
+    statementTimeoutMs: read.integer('MIGRATION_STATEMENT_TIMEOUT_MS', 600_000, 1_000, 86_400_000),
+    lockTimeoutMs: read.integer('MIGRATION_LOCK_TIMEOUT_MS', 5_000, 100, 600_000),
+  });
 }
 
 export function loadConfigOrExit<T>(load: () => T): T {

@@ -19,12 +19,72 @@ function lookup(ctx: StepContext, path: string): unknown {
   return cur;
 }
 
-export function renderTemplate(template: string, ctx: StepContext, encode: (value: string) => string = (value) => value): string {
-  return template.replace(PLACEHOLDER, (_m, path: string) => {
+export class TemplateTooLargeError extends Error {}
+
+export const RENDERED_LIMITS = {
+  url: 8 * 1024,
+  log: 2 * 1024,
+  body: 1024 * 1024,
+} as const;
+
+export interface RenderLimit {
+  maxLength: number;
+  what: string;
+  overflow?: 'throw' | 'truncate';
+}
+
+class BoundedText {
+  private text = '';
+  truncated = false;
+
+  constructor(private readonly limit?: RenderLimit) {}
+
+  append(piece: string): boolean {
+    if (!this.limit || this.text.length + piece.length <= this.limit.maxLength) {
+      this.text += piece;
+      return true;
+    }
+    if (this.limit.overflow === 'truncate') {
+      this.text += piece.slice(0, this.limit.maxLength - this.text.length);
+      this.truncated = true;
+      return false;
+    }
+    throw new TemplateTooLargeError(`${this.limit.what} exceeds ${this.limit.maxLength} characters after rendering`);
+  }
+
+  toString(): string {
+    return this.text;
+  }
+}
+
+function renderWith(template: string, limit: RenderLimit | undefined, placeholder: (path: string, before: string) => string): BoundedText {
+  const out = new BoundedText(limit);
+  let last = 0;
+  for (const match of template.matchAll(new RegExp(PLACEHOLDER.source, 'g'))) {
+    const literal = template.slice(last, match.index);
+    if (!out.append(literal) || !out.append(placeholder(match[1], literal))) return out;
+    last = match.index + match[0].length;
+  }
+  out.append(template.slice(last));
+  return out;
+}
+
+export function renderTemplate(
+  template: string,
+  ctx: StepContext,
+  encode: (value: string) => string = (value) => value,
+  limit?: RenderLimit,
+): string {
+  return renderWith(template, limit, (path) => {
     const value = lookup(ctx, path);
     if (value === undefined || value === null) return '';
     return encode(textOf(value));
-  });
+  }).toString();
+}
+
+export function renderLogMessage(template: string, ctx: StepContext, maxLength: number = RENDERED_LIMITS.log): { text: string; truncated: boolean } {
+  const out = renderWith(template, { maxLength, what: 'log message', overflow: 'truncate' }, (path) => textOf(lookup(ctx, path)));
+  return { text: out.toString(), truncated: out.truncated };
 }
 
 export type BodyFormat = 'json' | 'form' | 'text';
@@ -48,30 +108,26 @@ function textOf(value: unknown): string {
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
-function renderJsonTemplate(template: string, ctx: StepContext): string {
-  let rendered = '';
-  let last = 0;
+function renderJsonTemplate(template: string, ctx: StepContext, limit: RenderLimit): string {
   let inString = false;
   let escaped = false;
-  for (const match of template.matchAll(new RegExp(PLACEHOLDER.source, 'g'))) {
-    const literal = template.slice(last, match.index);
+  return renderWith(template, limit, (path, literal) => {
     for (const char of literal) {
       if (escaped) escaped = false;
       else if (inString && char === '\\') escaped = true;
       else if (char === '"') inString = !inString;
     }
-    const value = lookup(ctx, match[1]);
-    rendered += literal + (inString ? JSON.stringify(textOf(value)).slice(1, -1) : JSON.stringify(value ?? null));
     escaped = false;
-    last = match.index + match[0].length;
-  }
-  return rendered + template.slice(last);
+    const value = lookup(ctx, path);
+    return inString ? JSON.stringify(textOf(value)).slice(1, -1) : JSON.stringify(value ?? null);
+  }).toString();
 }
 
-export function renderBodyTemplate(template: string, ctx: StepContext, format: BodyFormat): string {
-  if (format === 'json') return renderJsonTemplate(template, ctx);
-  if (format === 'form') return renderTemplate(template, ctx, encodeURIComponent);
-  return renderTemplate(template, ctx);
+export function renderBodyTemplate(template: string, ctx: StepContext, format: BodyFormat, maxLength: number = RENDERED_LIMITS.body): string {
+  const limit = { maxLength, what: 'http body' };
+  if (format === 'json') return renderJsonTemplate(template, ctx, limit);
+  if (format === 'form') return renderTemplate(template, ctx, encodeURIComponent, limit);
+  return renderTemplate(template, ctx, undefined, limit);
 }
 
 export function hasPlaceholders(template: string): boolean {
@@ -94,7 +150,7 @@ export function renderUrlTemplate(template: string, ctx: StepContext): string {
   if (!hasPlaceholders(template)) return template;
   const origin = fixedOriginOf(template);
   if (!origin) throw new UrlTemplateError('http url template must start with a fixed origin');
-  const rendered = renderTemplate(template, ctx, encodeURIComponent);
+  const rendered = renderTemplate(template, ctx, encodeURIComponent, { maxLength: RENDERED_LIMITS.url, what: 'http url' });
   let renderedOrigin: string;
   try {
     renderedOrigin = new URL(rendered).origin;

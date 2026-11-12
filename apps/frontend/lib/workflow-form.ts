@@ -24,6 +24,7 @@ export interface WorkflowPayload {
 const STEP_TYPES = ['http', 'transform', 'log', 'delay'];
 const STEP_ID = /^[a-z][a-z0-9_]{0,31}$/;
 const POLICIES: MissedRunPolicy[] = ['skip', 'once', 'all'];
+const MAX_DELAY_MS = 3_600_000;
 const FIELDS: WorkflowField[] = ['name', 'enabled', 'cron', 'timezone', 'missedRunPolicy', 'steps'];
 
 export const EXAMPLE_STEPS: StepDefinition[] = [
@@ -69,11 +70,13 @@ function stepProblem(step: unknown, index: number, seen: Set<string>): string | 
       }
       return null;
     case 'transform':
-      return typeof step.expr === 'string' && step.expr.trim() !== '' ? null : `${at} needs an expression`;
+      return typeof step.expr === 'string' ? null : `${at} needs an expression`;
     case 'log':
       return typeof step.message === 'string' ? null : `${at} needs a message`;
     default:
-      return Number.isInteger(step.ms) && (step.ms as number) > 0 ? null : `${at} needs a positive whole number of milliseconds`;
+      return typeof step.ms === 'number' && step.ms >= 0 && step.ms <= MAX_DELAY_MS
+        ? null
+        : `${at} needs a number of milliseconds from 0 to ${MAX_DELAY_MS}`;
   }
 }
 

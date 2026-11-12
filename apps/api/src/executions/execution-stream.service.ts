@@ -10,6 +10,8 @@ const HEARTBEAT_MS = 15_000;
 const COALESCE_MS = 50;
 const RECONNECT_HINT_MS = 3_000;
 const STREAM_LIMIT_RETRY_AFTER_SECONDS = 10;
+const REFRESH_RETRY_BASE_MS = 250;
+const REFRESH_ATTEMPTS = 3;
 
 @Injectable()
 export class ExecutionStreamService implements BeforeApplicationShutdown {
@@ -43,9 +45,12 @@ export class ExecutionStreamService implements BeforeApplicationShutdown {
     this.openStreams.set(tenantId, open + 1);
 
     let closed = false;
+    let started = false;
+    let changedBeforeStart = false;
     let refreshing = false;
     let refreshAgain = false;
-    const timers: { coalesce?: NodeJS.Timeout; heartbeat?: NodeJS.Timeout } = {};
+    let failedRefreshes = 0;
+    const timers: { coalesce?: NodeJS.Timeout; heartbeat?: NodeJS.Timeout; retry?: NodeJS.Timeout } = {};
 
     const finish = () => {
       if (closed) return;
@@ -53,6 +58,7 @@ export class ExecutionStreamService implements BeforeApplicationShutdown {
       this.activeStreams.delete(finish);
       unsubscribe();
       clearTimeout(timers.coalesce);
+      clearTimeout(timers.retry);
       clearInterval(timers.heartbeat);
       this.releaseSlot(tenantId);
       if (!res.writableEnded) res.end();
@@ -73,19 +79,35 @@ export class ExecutionStreamService implements BeforeApplicationShutdown {
         do {
           refreshAgain = false;
           const snapshot = await this.executions.get(tenantId, executionId);
+          failedRefreshes = 0;
           if (!closed) send(snapshot);
         } while (refreshAgain && !closed);
       } catch (error) {
-        if (error instanceof NotFoundException && !closed) {
+        if (closed) return;
+        if (error instanceof NotFoundException) {
           res.write('event: gone\ndata: {}\n\n');
           finish();
+          return;
         }
+        failedRefreshes++;
+        if (failedRefreshes >= REFRESH_ATTEMPTS) {
+          finish();
+          return;
+        }
+        timers.retry = setTimeout(() => {
+          timers.retry = undefined;
+          void refresh();
+        }, REFRESH_RETRY_BASE_MS * 2 ** (failedRefreshes - 1));
       } finally {
         refreshing = false;
       }
     };
 
     const scheduleRefresh = () => {
+      if (!started) {
+        changedBeforeStart = true;
+        return;
+      }
       if (closed || timers.coalesce) return;
       timers.coalesce = setTimeout(() => {
         timers.coalesce = undefined;
@@ -121,6 +143,8 @@ export class ExecutionStreamService implements BeforeApplicationShutdown {
     });
     res.write(`retry: ${RECONNECT_HINT_MS}\n\n`);
     timers.heartbeat = setInterval(() => res.write(': keep-alive\n\n'), HEARTBEAT_MS);
+    started = true;
     send(first);
+    if (changedBeforeStart) scheduleRefresh();
   }
 }

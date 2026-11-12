@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { INTERNAL_WORKER_ERROR } from '../../../src/engine/job-runner.service';
 import { Execution, Job, OutboxEvent } from '../../../src/entities';
 import { verifyWebhook } from '../../../src/webhooks/signature';
 import { createTestApp } from '../../support/app';
@@ -199,6 +200,27 @@ describe('execution notifications', () => {
       }),
     );
     expect(deliveriesOf(execution.id)).toHaveLength(3);
+
+    const listed = await api().get('/notifications/events?status=dead').set('x-api-key', tenant.apiKey).expect(200);
+    expect(listed.body).toContainEqual(
+      expect.objectContaining({ executionId: execution.id, status: 'dead', attempts: 3, lastError: 'endpoint answered 503', lastStatusCode: 503 }),
+    );
+    expect(listed.body.every((event: Record<string, unknown>) => !('payload' in event) && event.status === 'dead')).toBe(true);
+  });
+
+  it.each([
+    'http://169.254.169.254/latest',
+    'http://localhost:1/x',
+    'http://10.0.0.1/hook',
+    'http://[::1]:8080/hook',
+    'http://[fd00:ec2::254]/hook',
+  ])('refuses %s as a notification endpoint, since no notification could ever be delivered there', async (url) => {
+    const owner = await seedTenant(ctx.ds, `private-endpoint-${Math.random()}`);
+
+    const refused = await api().put('/notifications/endpoint').set('x-api-key', owner.apiKey).send({ url }).expect(400);
+
+    expect(refused.body.message).toBe('url must point to a public internet address');
+    await api().get('/notifications/endpoint').set('x-api-key', owner.apiKey).expect(404);
   });
 
   it('records no notification for a tenant without an endpoint', async () => {
@@ -223,7 +245,7 @@ describe('execution notifications', () => {
 
     try {
       await eventually(async () =>
-        expect((await ctx.ds.getRepository(Job).findOneByOrFail({ id: job.id })).lastError).toContain('outbox is unavailable'),
+        expect((await ctx.ds.getRepository(Job).findOneByOrFail({ id: job.id })).lastError).toBe(INTERNAL_WORKER_ERROR),
       );
       expect(await ctx.ds.getRepository(Execution).findOneByOrFail({ id: execution.id })).not.toMatchObject({ status: 'succeeded' });
       expect(await ctx.ds.getRepository(OutboxEvent).countBy({ executionId: execution.id })).toBe(0);

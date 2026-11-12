@@ -36,6 +36,15 @@ async function recordExecutionEvent(em: EntityManager, executionId: string): Pro
   await em.query('SELECT record_execution_event($1)', [executionId]);
 }
 
+async function failInterruptedStep(em: EntityManager, executionId: string, error: string): Promise<void> {
+  await em.query(
+    `UPDATE step_runs SET "status" = 'failed', "error" = $2, "finishedAt" = now() WHERE "executionId" = $1 AND "status" = 'running'`,
+    [executionId, error],
+  );
+}
+
+export const SHUTDOWN_INTERRUPTION = 'interrupted because the worker is shutting down';
+
 const intervalFromNow = (seconds: number) => () => `now() + make_interval(secs => ${Number(seconds)})`;
 
 @Injectable()
@@ -61,7 +70,7 @@ export class JobQueueService {
         lockedUntil: null,
       });
       if (result.affected !== 1) return false;
-      await em.update(Execution, job.executionId, execution);
+      await em.update(Execution, job.executionId, { ...execution, error: null });
       await recordExecutionEvent(em, job.executionId);
       return true;
     });
@@ -79,6 +88,7 @@ export class JobQueueService {
           : { ...released, status: outcome },
       );
       if (result.affected !== 1) return 'lost';
+      await failInterruptedStep(em, job.executionId, error);
       if (outcome === 'retry') {
         await em.update(Execution, job.executionId, { status: 'pending', error });
       }
@@ -94,6 +104,14 @@ export class JobQueueService {
       }
       if (outcome !== 'retry') await recordExecutionEvent(em, job.executionId);
       return outcome;
+    });
+  }
+
+  markRunning(job: Job, workerId: string): Promise<void> {
+    return this.withOwnership(job, workerId, async (em) => {
+      await em.query(`UPDATE executions SET "status" = 'running' WHERE id = $1 AND "status" IN ('pending', 'waiting', 'running')`, [
+        job.executionId,
+      ]);
     });
   }
 
@@ -123,15 +141,9 @@ export class JobQueueService {
     });
   }
 
-  finishStep(job: Job, workerId: string, stepRunId: string, result: { output: unknown } | { error: string }): Promise<void> {
+  finishStep(job: Job, workerId: string, stepRunId: string, output: unknown): Promise<void> {
     return this.withOwnership(job, workerId, async (em) => {
-      await em.update(
-        StepRun,
-        stepRunId,
-        'error' in result
-          ? { status: 'failed', error: result.error, finishedAt: () => 'now()' }
-          : { status: 'succeeded', output: result.output as object, error: null, finishedAt: () => 'now()' },
-      );
+      await em.update(StepRun, stepRunId, { status: 'succeeded', output: output as object, error: null, finishedAt: () => 'now()' });
     });
   }
 
@@ -184,6 +196,7 @@ export class JobQueueService {
         runAt: () => 'now()',
       });
       if (result.affected !== 1) return false;
+      await failInterruptedStep(em, job.executionId, SHUTDOWN_INTERRUPTION);
       await em.update(Execution, job.executionId, { status: 'pending' });
       return true;
     });

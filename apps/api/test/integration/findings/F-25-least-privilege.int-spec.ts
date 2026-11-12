@@ -1,8 +1,10 @@
 import { INestApplication } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { DataSource } from 'typeorm';
+import { TenantDb } from '../../../src/db/tenant-db.service';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
+import { seedTenant, seedWorkflow } from '../../support/db';
 import { spawnAppProcess } from '../../support/process';
 
 describe('F-25 the API runs with least privilege and refuses insecure configuration', () => {
@@ -29,6 +31,35 @@ describe('F-25 the API runs with least privilege and refuses insecure configurat
     await expect(app.get(DataSource).query('CREATE TABLE least_privilege_probe (id int)')).rejects.toThrow(
       /permission denied/,
     );
+  });
+
+  it('cannot read or write the list of applied migrations', async () => {
+    const db = app.get(DataSource);
+    await expect(db.query(`SELECT count(*) FROM migrations`)).rejects.toThrow(/permission denied/);
+    await expect(db.query(`INSERT INTO migrations ("timestamp", name) VALUES (9999999999999, 'Planted9999999999999')`)).rejects.toThrow(
+      /permission denied/,
+    );
+  });
+
+  it('cannot change the limits or the api key hash of its own tenant row', async () => {
+    const { tenant } = await seedTenant(ctx.ds, 'own-limits');
+    const db = app.get(TenantDb);
+
+    await expect(db.run(tenant.id, (em) => em.query(`UPDATE tenants SET "maxQueuedJobs" = 10000000 WHERE id = $1`, [tenant.id]))).rejects.toThrow(
+      /permission denied/,
+    );
+    await expect(db.run(tenant.id, (em) => em.query(`UPDATE tenants SET "apiKeyHash" = 'x' WHERE id = $1`, [tenant.id]))).rejects.toThrow(
+      /permission denied/,
+    );
+  });
+
+  it('cannot rewrite or delete a recorded workflow version', async () => {
+    const { tenant } = await seedTenant(ctx.ds, 'immutable-versions');
+    await seedWorkflow(ctx.ds, tenant.id, [{ id: 'note', type: 'log', message: 'v1' }]);
+    const db = app.get(TenantDb);
+
+    await expect(db.run(tenant.id, (em) => em.query(`UPDATE workflow_versions SET steps = '[]'`))).rejects.toThrow(/permission denied/);
+    await expect(db.run(tenant.id, (em) => em.query(`DELETE FROM workflow_versions`))).rejects.toThrow(/permission denied/);
   });
 
   it('refuses to start in production with a placeholder admin token', async () => {

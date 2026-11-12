@@ -35,6 +35,13 @@ export class UpdateTenantLimitsDto {
 
 const LIMIT_FIELDS = ['maxConcurrentJobs', 'maxQueuedJobs', 'rateLimitPerMinute'] as const;
 
+interface TenantLimitsView {
+  id: string;
+  maxConcurrentJobs: number | null;
+  maxQueuedJobs: number | null;
+  rateLimitPerMinute: number | null;
+}
+
 @Controller('tenants')
 @UseGuards(AdminTokenGuard)
 export class TenantsController {
@@ -57,16 +64,8 @@ export class TenantsController {
   @Patch(':id/limits')
   async updateLimits(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateTenantLimitsDto) {
     const changes = Object.fromEntries(LIMIT_FIELDS.filter((field) => dto[field] !== undefined).map((field) => [field, dto[field]]));
-    const tenant = await this.db.run(id, async (em) => {
-      if (Object.keys(changes).length > 0) await em.update(Tenant, { id }, changes);
-      return em.findOne(Tenant, { where: { id } });
-    });
+    const [tenant]: TenantLimitsView[] = await this.db.setTenantLimits(id, changes);
     if (!tenant) throw new NotFoundException('Tenant not found');
-    return {
-      id: tenant.id,
-      maxConcurrentJobs: tenant.maxConcurrentJobs,
-      maxQueuedJobs: tenant.maxQueuedJobs,
-      rateLimitPerMinute: tenant.rateLimitPerMinute,
-    };
+    return tenant;
   }
 }

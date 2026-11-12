@@ -30,6 +30,8 @@ describe('loadApiConfig', () => {
       webhookSecretGraceSeconds: 86_400,
       tenantRateLimitPerMinute: 600,
       tenantMaxQueuedJobs: 10_000,
+      tenantMaxWorkflows: 1_000,
+      ssrfAllowlist: [],
     });
   });
 
@@ -113,6 +115,7 @@ describe('loadSchedulerConfig', () => {
       schedulerTickMs: 5_000,
       schedulerMisfireGraceMs: 60_000,
       schedulerMaxCatchUpRuns: 100,
+      schedulerPostponeMs: 30_000,
       tenantMaxQueuedJobs: 10_000,
     });
   });
@@ -152,7 +155,8 @@ describe('loadWorkerConfig', () => {
       metricsPort: 9_100,
       outbox: {
         pollIntervalMs: 1_000,
-        batchSize: 10,
+        concurrency: 10,
+        tenantConcurrency: 2,
         leaseSeconds: 30,
         maxAttempts: 15,
         retryBaseMs: 30_000,
@@ -210,5 +214,14 @@ describe('loadWorkerConfig', () => {
 describe('loadMigrationConfig', () => {
   it('requires MIGRATION_DATABASE_URL', () => {
     expect(problemsOf(() => loadMigrationConfig({ DATABASE_URL }))).toEqual(['MIGRATION_DATABASE_URL is required']);
+  });
+
+  it('bounds how long migrations may wait for a connection, a statement and a lock', () => {
+    expect(loadMigrationConfig({ MIGRATION_DATABASE_URL: DATABASE_URL })).toEqual({
+      migrationDatabaseUrl: DATABASE_URL,
+      connectTimeoutMs: 5_000,
+      statementTimeoutMs: 600_000,
+      lockTimeoutMs: 5_000,
+    });
   });
 });

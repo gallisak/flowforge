@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { QUEUE_LIMITS, QueueLimits } from '../config/config';
@@ -9,6 +9,21 @@ import { TooManyRequestsException } from '../limits/too-many-requests';
 import { currentCorrelationId } from '../observability/log-context';
 
 const QUEUE_FULL_RETRY_AFTER_SECONDS = 30;
+const SUMMARY_COLUMNS = [
+  'id',
+  'tenantId',
+  'workflowId',
+  'workflowVersion',
+  'status',
+  'error',
+  'trigger',
+  'triggerKey',
+  'correlationId',
+  'createdAt',
+  'finishedAt',
+] as const;
+
+export type ExecutionSummary = Pick<Execution, (typeof SUMMARY_COLUMNS)[number]>;
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
 
@@ -20,12 +35,14 @@ export interface ExecutionListFilter {
 }
 
 export interface ExecutionPage {
-  items: Execution[];
+  items: ExecutionSummary[];
   nextCursor: string | null;
 }
 
 @Injectable()
 export class ExecutionsService {
+  private readonly logger = new Logger(ExecutionsService.name);
+
   constructor(
     private readonly db: TenantDb,
     @Inject(QUEUE_LIMITS) private readonly limits: QueueLimits,
@@ -59,7 +76,8 @@ export class ExecutionsService {
     const tenant = await em.findOneOrFail(Tenant, { where: { id: workflow.tenantId } });
     const maxQueued = tenant.maxQueuedJobs ?? this.limits.tenantMaxQueuedJobs;
     const [{ queued }]: Array<{ queued: number }> = await em.query(
-      `SELECT count(*)::int AS queued FROM (SELECT 1 FROM "jobs" WHERE "tenantId" = $1 AND "status" = 'queued' LIMIT $2) q`,
+      `SELECT count(*)::int AS queued
+         FROM (SELECT 1 FROM "jobs" WHERE "tenantId" = $1 AND "status" = 'queued' AND "runAt" <= now() LIMIT $2) q`,
       [workflow.tenantId, maxQueued],
     );
     if (queued >= maxQueued) {
@@ -88,6 +106,7 @@ export class ExecutionsService {
       return em.findOneOrFail(Execution, { where: { tenantId: workflow.tenantId, triggerKey } });
     }
     await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: id }));
+    this.logger.log({ msg: 'execution created', executionId: id, workflowId: workflow.id, tenantId: workflow.tenantId, trigger });
     return em.findOneOrFail(Execution, { where: { id } });
   }
 
@@ -97,6 +116,7 @@ export class ExecutionsService {
     return this.db.run(tenantId, async (em) => {
       const query = em
         .createQueryBuilder(Execution, 'e')
+        .select(SUMMARY_COLUMNS.map((column) => `e.${column}`))
         .addSelect('e."createdAt"::text', 'cursor_created_at')
         .where('e."tenantId" = :tenantId', { tenantId })
         .orderBy('e."createdAt"', 'DESC')

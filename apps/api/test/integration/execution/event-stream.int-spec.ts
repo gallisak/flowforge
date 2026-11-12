@@ -3,6 +3,7 @@ import { request as httpRequest } from 'http';
 import { AddressInfo } from 'net';
 import request from 'supertest';
 import { ExecutionEventsHub } from '../../../src/executions/execution-events.hub';
+import { Execution } from '../../../src/entities';
 import { ExecutionsService } from '../../../src/executions/executions.service';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
@@ -71,6 +72,58 @@ describe('execution event stream', () => {
 
     expect(await Promise.race([closed, stuck])).toBe('closed');
     await events.ended;
+  });
+
+  describe('when reading a snapshot fails', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    const finish = (id: string) => ctx.ds.getRepository(Execution).update(id, { status: 'succeeded', finishedAt: new Date() });
+
+    it('retries the read and still delivers the final status', async () => {
+      const id = await createRun([{ id: 'pause', type: 'delay', ms: 60_000 }]);
+      const events = await stream(id);
+      await eventually(() => expect(statusesOf(events).length).toBeGreaterThan(0));
+      jest.spyOn(app.get(ExecutionsService), 'get').mockRejectedValueOnce(new Error('canceling statement due to statement timeout'));
+
+      await finish(id);
+
+      await eventually(() => expect(statusesOf(events).at(-1)).toBe('succeeded'), { timeoutMs: 5_000 });
+      await events.ended;
+    });
+
+    it('ends the stream after repeated failures so that the client reconnects', async () => {
+      const id = await createRun([{ id: 'pause', type: 'delay', ms: 60_000 }]);
+      const events = await stream(id);
+      await eventually(() => expect(statusesOf(events).length).toBeGreaterThan(0));
+      jest.spyOn(app.get(ExecutionsService), 'get').mockRejectedValue(new Error('timeout exceeded when trying to connect'));
+
+      await ctx.ds.getRepository(Execution).update(id, { error: 'changed' });
+
+      const outcome = await Promise.race([events.ended.then(() => 'ended'), new Promise((resolve) => setTimeout(() => resolve('open'), 5_000))]);
+      expect(outcome).toBe('ended');
+    });
+  });
+
+  it('sends a change that arrives during the first read only after the event stream headers', async () => {
+    const id = await createRun([{ id: 'pause', type: 'delay', ms: 60_000 }]);
+    const service = app.get(ExecutionsService);
+    const original = service.get.bind(service);
+    jest.spyOn(service, 'get').mockImplementationOnce(async (tenantId, executionId) => {
+      await ctx.ds.getRepository(Execution).update(executionId, { error: 'changed while loading' });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return original(tenantId, executionId);
+    });
+
+    try {
+      const events = await stream(id);
+
+      expect(events.status).toBe(200);
+      expect(events.headers['content-type']).toBe('text/event-stream');
+      await eventually(() => expect(events.events.filter((e) => e.event === 'snapshot').length).toBeGreaterThanOrEqual(2));
+      expect(events.body.startsWith('retry: ')).toBe(true);
+    } finally {
+      jest.restoreAllMocks();
+    }
   });
 
   it('sends a snapshot on every change and closes the stream when the execution finishes', async () => {

@@ -5,6 +5,7 @@ export interface SandboxLimits {
   timeoutMs: number;
   memoryBytes: number;
   stackBytes: number;
+  outputMaxBytes: number;
 }
 
 export class TransformError extends Error {
@@ -57,7 +58,7 @@ class SandboxThread {
     this.worker.on('error', () => undefined);
     this.worker.on('exit', () => {
       this.exited = true;
-      this.pending?.reject(new TransformError('transform sandbox crashed'));
+      this.pending?.reject(new TransformError('transform sandbox crashed', true));
       this.pending = undefined;
       onExit(this);
     });
@@ -86,6 +87,7 @@ class SandboxThread {
         this.worker.off('message', onMessage);
       };
       const onMessage = (reply: SandboxReply) => {
+        if ('retire' in reply && reply.retire) this.retired = true;
         settle();
         resolve(reply);
       };
@@ -126,16 +128,26 @@ export class TransformSandbox {
     } catch {
       throw new TransformError('transform input cannot be serialized');
     }
+    const { timeoutMs, memoryBytes, stackBytes, outputMaxBytes } = this.limits;
     const thread = await this.acquire();
+    let reply: SandboxReply;
     try {
-      const reply = await thread.run(
-        { expr, input: serialized, limits: this.limits },
-        this.limits.timeoutMs + Math.max(250, this.limits.timeoutMs),
+      reply = await thread.run(
+        { expr, input: serialized, limits: { timeoutMs, memoryBytes, stackBytes, outputMaxChars: outputMaxBytes } },
+        timeoutMs + Math.max(250, timeoutMs),
       );
-      if ('error' in reply) throw new TransformError(reply.error);
-      return reply.output === undefined ? undefined : JSON.parse(reply.output);
     } finally {
       this.release(thread);
+    }
+    if ('error' in reply) throw new TransformError(reply.error);
+    if ('outputTooLarge' in reply || (reply.output !== undefined && Buffer.byteLength(reply.output) > outputMaxBytes)) {
+      throw new TransformError(`step output exceeds ${outputMaxBytes} bytes`);
+    }
+    if (reply.output === undefined) return undefined;
+    try {
+      return JSON.parse(reply.output);
+    } catch {
+      throw new TransformError('transform produced a result that is not JSON');
     }
   }
 

@@ -77,7 +77,7 @@ describe('planFiring', () => {
   it('fires nothing before the next run is due', () => {
     const result = plan('once', '2026-11-20T09:00:00Z', '2026-11-20T08:59:59Z');
 
-    expect(result).toEqual({ fire: [], droppedMissedRuns: false, nextRunAt: at('2026-11-20T09:00:00Z') });
+    expect(result).toEqual({ fire: [], skippedRuns: 0, skippedRunsCapped: false, nextRunAt: at('2026-11-20T09:00:00Z') });
   });
 
   it.each<MissedRunPolicy>(['skip', 'once', 'all'])('fires an on-time occurrence under the %s policy', (policy) => {
@@ -119,14 +119,14 @@ describe('planFiring', () => {
     const result = plan('all', '2026-11-20T10:00:00Z', '2026-11-20T19:30:00Z', limited);
 
     expect(iso(result.fire)).toEqual(['2026-11-20T17:00:00.000Z', '2026-11-20T18:00:00.000Z', '2026-11-20T19:00:00.000Z']);
-    expect(result.droppedMissedRuns).toBe(true);
+    expect(result.skippedRuns).toBe(7);
   });
 
   it('does not report dropped runs when the missed runs fit the limit exactly', () => {
     const result = plan('all', '2026-11-20T17:00:00Z', '2026-11-20T19:30:00Z', { ...LIMITS, maxCatchUpRuns: 3 });
 
     expect(result.fire).toHaveLength(3);
-    expect(result.droppedMissedRuns).toBe(false);
+    expect(result.skippedRuns).toBe(0);
   });
 
   it('plans a catch-up after a year long outage of an every-minute schedule without walking every minute', () => {
@@ -163,5 +163,74 @@ describe('planFiring', () => {
 
     expect(iso(result.fire)).toEqual(['2026-03-08T07:30:00.000Z']);
     expect(result.nextRunAt.toISOString()).toBe('2026-03-09T06:30:00.000Z');
+  });
+});
+
+describe('nextOccurrence around clock changes that are not one hour long or happen at midnight', () => {
+  const HOUR = 60 * 60 * 1000;
+  const intervalsOf = (runs: string[]) => runs.slice(1).map((run, i) => (Date.parse(run) - Date.parse(runs[i])) / HOUR);
+
+  it.each([
+    ['Australia/Lord_Howe', '45 1 * * *'],
+    ['Australia/Lord_Howe', '30 1 * * *'],
+    ['Australia/Lord_Howe', '15 2 * * *'],
+    ['Pacific/Chatham', '0 3 * * *'],
+    ['Pacific/Chatham', '15 3 * * *'],
+    ['Pacific/Chatham', '30 3 * * *'],
+    ['Pacific/Chatham', '45 2 * * *'],
+    ['America/Santiago', '0 0 * * *'],
+    ['America/Havana', '0 0 * * *'],
+    ['Asia/Beirut', '0 0 * * *'],
+    ['Africa/Cairo', '0 0 * * *'],
+    ['Atlantic/Azores', '0 0 * * *'],
+    ['Antarctica/Troll', '30 1 * * *'],
+    ['Antarctica/Troll', '30 2 * * *'],
+    ['America/Nuuk', '30 23 * * *'],
+    ['America/New_York', '30 2 * * *'],
+    ['Europe/Kyiv', '30 3 * * *'],
+  ])('fires a daily schedule in %s at %s exactly once a day for two years', (timezone, cron) => {
+    const runs = chain({ cron, timezone }, nextOccurrence({ cron, timezone }, at('2026-01-01T00:00:00Z')).toISOString(), 731);
+
+    const unusual = intervalsOf(runs).filter((hours) => hours < 21 || hours > 27);
+    expect(unusual).toEqual([]);
+    expect(Date.parse(runs[730]) - Date.parse(runs[0])).toBeGreaterThan(729 * 24 * HOUR);
+    expect(Date.parse(runs[730]) - Date.parse(runs[0])).toBeLessThan(731 * 24 * HOUR);
+  });
+
+  it('fires 01:45 on the day Lord Howe moves its clocks back by 30 minutes only once', () => {
+    expect(chain({ cron: '45 1 * * *', timezone: 'Australia/Lord_Howe' }, '2027-04-02T14:45:00Z', 3)).toEqual([
+      '2027-04-02T14:45:00.000Z',
+      '2027-04-03T14:45:00.000Z',
+      '2027-04-04T15:15:00.000Z',
+    ]);
+  });
+
+  it('moves a midnight that does not exist in Santiago to the first minute after the gap', () => {
+    expect(chain({ cron: '0 0 * * *', timezone: 'America/Santiago' }, '2026-09-05T04:00:00Z', 3)).toEqual([
+      '2026-09-05T04:00:00.000Z',
+      '2026-09-06T04:00:00.000Z',
+      '2026-09-07T03:00:00.000Z',
+    ]);
+    expect(nextOccurrence({ cron: '0 0 6 9 *', timezone: 'America/Santiago' }, at('2026-01-01T00:00:00Z')).toISOString()).toBe(
+      '2026-09-06T04:00:00.000Z',
+    );
+  });
+
+  it('does not repeat a fixed time when the next run is computed inside the repeated hour', () => {
+    expect(nextOccurrence({ cron: '30 1 * * *', timezone: 'America/New_York' }, at('2026-11-01T06:10:00Z')).toISOString()).toBe(
+      '2026-11-02T06:30:00.000Z',
+    );
+  });
+
+  it.each([
+    ['Australia/Lord_Howe', '2027-04-03T12:00:00Z'],
+    ['Australia/Lord_Howe', '2026-10-03T12:00:00Z'],
+    ['Antarctica/Troll', '2026-03-28T22:00:00Z'],
+    ['Antarctica/Troll', '2026-10-24T22:00:00Z'],
+    ['Pacific/Chatham', '2027-04-03T10:15:00Z'],
+  ])('runs an every-30-minutes schedule in %s by elapsed time across the change after %s', (timezone, from) => {
+    const runs = chain({ cron: '*/30 * * * *', timezone }, from, 24);
+
+    expect(intervalsOf(runs).every((hours) => hours === 0.5)).toBe(true);
   });
 });

@@ -12,18 +12,21 @@ export interface StepRunDto {
   finishedAt?: string | null;
 }
 
-export interface ExecutionDto {
+export interface ExecutionSummaryDto {
   id: string;
   workflowId: string;
   workflowVersion: number;
   status: ExecutionStatus;
   trigger: string;
-  input: Record<string, unknown>;
-  output: unknown;
   error: string | null;
   correlationId: string | null;
   createdAt: string;
   finishedAt: string | null;
+}
+
+export interface ExecutionDto extends ExecutionSummaryDto {
+  input: Record<string, unknown>;
+  output: unknown;
 }
 
 export interface ExecutionDetailDto extends ExecutionDto {
@@ -37,6 +40,18 @@ export type StepDefinition =
   | { id: string; type: 'transform'; expr: string }
   | { id: string; type: 'log'; message: string }
   | { id: string; type: 'delay'; ms: number };
+
+export interface WorkflowSummaryDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  cron: string | null;
+  timezone: string;
+  missedRunPolicy: MissedRunPolicy;
+  nextRunAt: string | null;
+  version: number;
+  createdAt: string;
+}
 
 export interface WorkflowDto {
   id: string;

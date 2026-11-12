@@ -10,6 +10,8 @@ import {
   SCHEDULER_CONFIG,
   SchedulerConfig,
   WORKER_CONFIG,
+  WORKFLOW_LIMITS,
+  WorkflowLimits,
 } from './config';
 
 @Global()
@@ -21,8 +23,13 @@ import {
       inject: [API_CONFIG],
       useFactory: (config: ApiConfig): QueueLimits => ({ tenantMaxQueuedJobs: config.tenantMaxQueuedJobs }),
     },
+    {
+      provide: WORKFLOW_LIMITS,
+      inject: [API_CONFIG],
+      useFactory: (config: ApiConfig): WorkflowLimits => ({ tenantMaxWorkflows: config.tenantMaxWorkflows }),
+    },
   ],
-  exports: [API_CONFIG, QUEUE_LIMITS],
+  exports: [API_CONFIG, QUEUE_LIMITS, WORKFLOW_LIMITS],
 })
 export class ApiConfigModule {}
 

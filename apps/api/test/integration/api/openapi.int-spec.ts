@@ -119,6 +119,8 @@ describe('OpenAPI document', () => {
       .send({ name: 'documented', steps: [{ id: 'note', type: 'log', message: 'hi' }] })
       .expect(201);
     expectDocumented('Workflow', workflow.body);
+    const workflows = await request(server).get('/workflows').set('x-api-key', key).expect(200);
+    expectDocumented('WorkflowSummary', workflows.body[0]);
 
     const execution = await request(server).post(`/workflows/${workflow.body.id}/run`).set('x-api-key', key).send({ a: 1 }).expect(201);
     expectDocumented('Execution', execution.body);
@@ -131,6 +133,8 @@ describe('OpenAPI document', () => {
     });
     expectDocumented('ExecutionDetail', detail);
     expectDocumented('StepRun', detail.steps[0]);
+    const executions = await request(server).get('/executions').set('x-api-key', key).expect(200);
+    expectDocumented('ExecutionSummary', executions.body[0]);
 
     const secret = await request(server).post('/webhook-secrets').set('x-api-key', key).expect(201);
     expectDocumented('CreatedSigningSecret', secret.body);
@@ -170,5 +174,7 @@ describe('OpenAPI document', () => {
 
     expect(Object.keys(body).sort()).toEqual(flatten(document, schema).properties);
     expectDocumented('ExecutionNotification', body.data);
+    const listed = await request(server).get('/notifications/events').set('x-api-key', key).expect(200);
+    expectDocumented('NotificationEvent', listed.body[0]);
   });
 });

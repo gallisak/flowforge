@@ -17,7 +17,7 @@ function keepRawBodyAndRejectDeepJson(req: RawBodyRequest, _res: unknown, body: 
 
 export function configureApp(app: INestApplication): INestApplication {
   app.use(assignRequestId);
-  (app as NestExpressApplication).useBodyParser('json', { reviver: rejectNulReviver, verify: keepRawBodyAndRejectDeepJson });
+  (app as NestExpressApplication).useBodyParser('json', { inflate: false, reviver: rejectNulReviver, verify: keepRawBodyAndRejectDeepJson });
   app.use(enterRequestContext);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   app.useGlobalFilters(new ApiExceptionFilter());

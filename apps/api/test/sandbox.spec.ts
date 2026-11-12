@@ -1,7 +1,7 @@
 import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from '../src/engine/sandbox/transform-sandbox';
 
 describe('TransformSandbox', () => {
-  const limits = { timeoutMs: 100, memoryBytes: 16 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES };
+  const limits = { timeoutMs: 100, memoryBytes: 16 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES, outputMaxBytes: 1024 * 1024 };
   let sandbox: TransformSandbox;
 
   beforeAll(() => {
@@ -117,4 +117,52 @@ describe('TransformSandbox', () => {
     expect(await waiting).toMatchObject({ message: 'transform sandbox is shut down', retryable: true });
     expect(await running).toBeInstanceOf(TransformError);
   });
+
+  it('rejects an oversized result inside the sandbox', async () => {
+    expect((await failureOf("'x'.repeat(2 * 1024 * 1024)")).message).toBe('step output exceeds 1048576 bytes');
+    expect((await failureOf("'\u00e9'.repeat(600 * 1024)")).message).toBe('step output exceeds 1048576 bytes');
+    await expect(sandbox.evaluate("'x'.repeat(1000).length", {})).resolves.toBe(1000);
+  });
+});
+
+describe('TransformSandbox with hostile thrown values', () => {
+  const limits = { timeoutMs: 100, memoryBytes: 16 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES, outputMaxBytes: 1024 * 1024 };
+  const hostileThrows = [
+    '(() => { throw Promise.resolve(1) })()',
+    '(() => { throw Promise.reject(1) })()',
+    '(() => { throw { get message() { throw 1 }, get name() { throw 2 } } })()',
+    '(() => { throw Symbol("x") })()',
+    '(() => { throw { toString() { throw 1 } } })()',
+  ];
+
+  it.each(hostileThrows)('reports %s as a failure of that transform only', async (expr) => {
+    const single = new TransformSandbox(limits, 1);
+    try {
+      const error = await single.evaluate(expr, {}).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(TransformError);
+      expect((error as TransformError).message).toMatch(/^transform failed/);
+      expect((error as TransformError).retryable).toBe(false);
+      await expect(single.evaluate('2 + 2', {})).resolves.toBe(4);
+    } finally {
+      await single.close();
+    }
+  });
+
+  it('never hands a broken thread to the transform waiting next in line', async () => {
+    const single = new TransformSandbox(limits, 1);
+    try {
+      const [attack, victims] = await Promise.all([
+        single.evaluate(hostileThrows[0], {}).catch((e: unknown) => e),
+        Promise.all(Array.from({ length: 3 }, (_, n) => single.evaluate('ctx.n + 1', { n }))),
+      ]);
+      expect(attack).toBeInstanceOf(TransformError);
+      expect(victims).toEqual([1, 2, 3]);
+    } finally {
+      await single.close();
+    }
+  });
+
 });

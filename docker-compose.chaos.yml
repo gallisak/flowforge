@@ -5,7 +5,11 @@ services:
     init: true
     volumes:
       - ./docker/chaos:/sink:ro
-    ports: ['${SINK_PORT:-18080}:8080']
+    ports: ['127.0.0.1:${SINK_PORT:-18080}:8080']
+
+  api:
+    environment:
+      SSRF_ALLOWLIST: sink:8080
 
   worker:
     environment:

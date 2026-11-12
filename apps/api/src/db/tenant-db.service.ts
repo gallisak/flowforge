@@ -63,15 +63,18 @@ export class TenantDb {
 
   claimDueSchedule<T>(
     now: Date,
-    skip: readonly string[],
     work: (schedule: DueSchedule, manager: EntityManager) => Promise<T>,
   ): Promise<{ claimed: false } | { claimed: true; result: T }> {
     return this.dataSource.transaction(async (manager) => {
-      const [schedule]: DueSchedule[] = await manager.query('SELECT * FROM claim_due_schedule($1, $2::uuid[])', [now, skip]);
+      const [schedule]: DueSchedule[] = await manager.query('SELECT * FROM claim_due_schedule($1)', [now]);
       if (!schedule) return { claimed: false };
       await manager.query(`SELECT set_config('app.tenant_id', $1, true)`, [schedule.tenantId]);
       return { claimed: true, result: await work(schedule, manager) };
     });
+  }
+
+  setTenantLimits<T>(tenantId: string, changes: Record<string, number | null | undefined>): Promise<T[]> {
+    return this.dataSource.query('SELECT * FROM set_tenant_limits($1, $2::jsonb)', [tenantId, JSON.stringify(changes)]);
   }
 
   async hitRateLimit(tenantId: string, defaultLimit: number): Promise<RateLimitHit> {
@@ -83,8 +86,8 @@ export class TenantDb {
     return this.dataSource.query('SELECT * FROM reap_expired_jobs()');
   }
 
-  claimOutboxEvents(dispatcherId: string, leaseSeconds: number, limit: number): Promise<OutboxEvent[]> {
-    return this.dataSource.query('SELECT * FROM claim_outbox_events($1, $2, $3)', [dispatcherId, leaseSeconds, limit]);
+  claimOutboxEvents(dispatcherId: string, leaseSeconds: number, limit: number, perTenant: number): Promise<OutboxEvent[]> {
+    return this.dataSource.query('SELECT * FROM claim_outbox_events($1, $2, $3, $4)', [dispatcherId, leaseSeconds, limit, perTenant]);
   }
 
   async claimJob(workerId: string, leaseSeconds: number, defaultMaxRunning: number): Promise<Job | null> {

@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { Execution, Job, Tenant } from '../../../src/entities';
+import { metrics } from '../../../src/observability/metrics';
 import { createTestApp } from '../../support/app';
 import { restoreClock, setClock } from '../../support/clock';
 import { useIntegrationContext } from '../../support/context';
@@ -157,6 +158,37 @@ describe('distributed scheduler', () => {
 
     expect(await cronRuns(blocked.id)).toHaveLength(0);
     expect(await cronRuns(healthy.id)).toHaveLength(1);
+  });
+
+  it('postpones the schedules of a tenant whose queue is full instead of retrying them on every claim', async () => {
+    setClock('2026-11-20T08:30:00Z');
+    const crowded = await seedTenant(ctx.ds, 'full-queue');
+    await ctx.ds.getRepository(Tenant).update(crowded.tenant.id, { maxQueuedJobs: 1 });
+    const filler = await seedWorkflow(ctx.ds, crowded.tenant.id, [{ id: 'note', type: 'log', message: 'fill' }]);
+    const queued = await ctx.ds.getRepository(Execution).save({ tenantId: crowded.tenant.id, workflowId: filler.id, input: {} });
+    await ctx.ds.getRepository(Job).save({ tenantId: crowded.tenant.id, executionId: queued.id });
+    for (let i = 0; i < 30; i++) {
+      await seedWorkflow(ctx.ds, crowded.tenant.id, [{ id: 'note', type: 'log', message: 'tick' }], {
+        cron: '0 9 * * *',
+        nextRunAt: new Date('2026-11-20T09:00:00Z'),
+      });
+    }
+    const healthy = await createScheduledWorkflow(app, tenant.apiKey, { cron: '0 9 * * *', timezone: 'UTC' });
+    schedulers = await startInProcessSchedulers(1);
+    const postponed = async () => (await metrics.scheduledRuns.get()).values.find((v) => v.labels.outcome === 'postponed')?.value ?? 0;
+
+    await tickAt('2026-11-20T09:00:30Z');
+    const afterFirstTick = await postponed();
+    await tickAt('2026-11-20T09:00:33Z');
+
+    expect(await postponed()).toBe(afterFirstTick);
+    expect(await cronRuns(healthy.id)).toHaveLength(1);
+    const waiting: Array<{ retryAt: Date }> = await ctx.ds.query(
+      `SELECT "scheduleRetryAt" AS "retryAt" FROM workflows WHERE "tenantId" = $1 AND cron IS NOT NULL`,
+      [crowded.tenant.id],
+    );
+    expect(waiting).toHaveLength(30);
+    expect(waiting.every((row) => row.retryAt > new Date('2026-11-20T09:00:33Z'))).toBe(true);
   });
 
   it('starts the catch-up runs that fit the tenant queue and the rest once the queue drains', async () => {

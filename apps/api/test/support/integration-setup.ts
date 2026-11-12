@@ -8,3 +8,4 @@ process.env.OUTBOX_POLL_INTERVAL_MS ??= '100';
 process.env.OUTBOX_RETRY_BASE_MS ??= '50';
 process.env.OUTBOX_RETRY_CAP_MS ??= '200';
 process.env.METRICS_PORT ??= '0';
+process.env.SCHEDULER_POSTPONE_MS ??= '5000';

@@ -7,6 +7,7 @@ export const entities = [Tenant, Workflow, WorkflowVersion, Execution, StepRun, 
 export interface DatabaseTimeouts {
   connectTimeoutMs: number;
   statementTimeoutMs: number;
+  lockTimeoutMs?: number;
 }
 
 const CLIENT_TIMEOUT_MARGIN_MS = 5_000;
@@ -26,6 +27,7 @@ export function dataSourceOptions(url: string, timeouts?: DatabaseTimeouts): Dat
       statement_timeout: timeouts.statementTimeoutMs,
       query_timeout: timeouts.statementTimeoutMs + CLIENT_TIMEOUT_MARGIN_MS,
       idle_in_transaction_session_timeout: timeouts.statementTimeoutMs * 2,
+      ...(timeouts.lockTimeoutMs ? { lock_timeout: timeouts.lockTimeoutMs } : {}),
       keepAlive: true,
     },
   };
