@@ -4,6 +4,7 @@ import { WorkerModule } from '../../src/app.module';
 import { JobRunnerService } from '../../src/engine/job-runner.service';
 import { OutboxDispatcher } from '../../src/outbox/outbox-dispatcher.service';
 import { RetentionService } from '../../src/retention/retention.service';
+import { trackOpen } from './open-resources';
 import { AppProcess, spawnAppProcess } from './process';
 
 export interface InProcessWorkers {
@@ -24,9 +25,7 @@ export async function startInProcessWorkers(count: number, concurrency = 1): Pro
   return {
     ids: contexts.map((c) => c.get(JobRunnerService).workerId),
     contexts,
-    async stop() {
-      await Promise.all(contexts.map((c) => c.close()));
-    },
+    stop: trackOpen(() => Promise.all(contexts.map((c) => c.close()))),
   };
 }
 

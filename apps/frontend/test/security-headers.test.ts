@@ -4,8 +4,8 @@ import config from '../next.config.js';
 describe('security headers', () => {
   it('sends a content security policy, frame, sniffing and referrer rules on every page and no X-Powered-By', async () => {
     const rules = await config.headers();
-    const all = rules.find((rule: { source: string }) => rule.source === '/:path*');
-    const headers = Object.fromEntries(all.headers.map((h: { key: string; value: string }) => [h.key.toLowerCase(), h.value]));
+    const [all] = rules.filter((rule) => rule.source === '/:path*');
+    const headers = Object.fromEntries(all.headers.map((h) => [h.key.toLowerCase(), h.value]));
 
     expect(config.poweredByHeader).toBe(false);
     expect(headers['content-security-policy']).toMatch(/frame-ancestors 'none'/);

@@ -298,12 +298,28 @@ describe('query plans of the hot paths on a realistically sized database', () =>
     expect(indexesOf(plans).some((index) => index === 'IDX_jobs_running_by_tenant' || index === 'IDX_jobs_expired_leases')).toBe(true);
   });
 
-  it('lists the notifications of a tenant in one delivery state from an index without reading the others', async () => {
+  it.each([
+    ['a large tenant', TENANT_1],
+    ['a tenant without delivered notifications', SLEEPING_TENANT],
+  ])('lists the delivered notifications of %s from its own index without reading other tenants', async (_case, tenant) => {
     const notifications = new NotificationsService(db, {} as WebhookSecretsService, { ssrfAllowlist: [] } as unknown as ApiConfig);
-    const plans = await plansOf('list notifications by status', () => notifications.events(TENANT_1, { status: 'delivering', limit: 20 }));
+    const plans = await plansOf('list notifications by status', () => notifications.events(tenant, { status: 'delivered', limit: 20 }));
 
     expectIndexed(plans, 'IDX_outbox_events_tenant_status_created');
     expect(rowsRemovedByFilter(plans)).toBeLessThan(100);
+    expect(largestSortInput(plans)).toBe(0);
+  });
+
+  it.each([
+    ['a large tenant', TENANT_1],
+    ['a tenant without delivered notifications', SLEEPING_TENANT],
+  ])('lists all notifications of %s from its own index without reading other tenants', async (_case, tenant) => {
+    const notifications = new NotificationsService(db, {} as WebhookSecretsService, { ssrfAllowlist: [] } as unknown as ApiConfig);
+    const plans = await plansOf('list notifications', () => notifications.events(tenant, { limit: 20 }));
+
+    expectIndexed(plans, 'IDX_outbox_events_tenant_created');
+    expect(rowsRemovedByFilter(plans)).toBeLessThan(100);
+    expect(largestSortInput(plans)).toBe(0);
   });
 
   it('finds finished executions and notifications to purge from their partial indexes', async () => {

@@ -79,7 +79,7 @@ export class NotificationsService {
       em.find(OutboxEvent, {
         select: EVENT_COLUMNS,
         where: { tenantId, ...(filter.status ? { status: filter.status } : {}) },
-        order: { createdAt: 'DESC' },
+        order: { createdAt: 'DESC', id: 'DESC' },
         take: filter.limit ?? 20,
       }),
     );

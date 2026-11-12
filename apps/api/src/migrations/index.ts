@@ -29,6 +29,7 @@ import { PerStepAttempts1794321800000 } from './1794321800000-per-step-attempts'
 import { WatchedExecutionNotifications1794321850000 } from './1794321850000-watched-execution-notifications';
 import { DataRetention1794321900000 } from './1794321900000-data-retention';
 import { TenantLimitChecks1794322000000 } from './1794322000000-tenant-limit-checks';
+import { NotificationListIndexes1794322100000 } from './1794322100000-notification-list-indexes';
 
 export const migrations = [
   Baseline1794305090749,
@@ -62,4 +63,5 @@ export const migrations = [
   WatchedExecutionNotifications1794321850000,
   DataRetention1794321900000,
   TenantLimitChecks1794322000000,
+  NotificationListIndexes1794322100000,
 ];

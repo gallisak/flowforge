@@ -19,6 +19,6 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) notFound();
     const failure = e instanceof ApiError ? e : new ApiError(0, ['The API is not reachable']);
-    return <ErrorState title="Could not load the workflow" message={failure.message} status={failure.status} />;
+    return <ErrorState title="Could not load the workflow" message={failure.message} status={failure.status} refreshable />;
   }
 }

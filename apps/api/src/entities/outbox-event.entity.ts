@@ -8,8 +8,8 @@ export type OutboxEventStatus = (typeof OUTBOX_EVENT_STATUSES)[number];
 @Index('IDX_outbox_events_pending_by_tenant', ['tenantId', 'nextAttemptAt'], { where: `"status" = 'pending'` })
 @Index('IDX_outbox_events_expired_leases', ['lockedUntil'], { where: `"status" = 'delivering'` })
 @Index('IDX_outbox_events_execution', ['tenantId', 'executionId'])
-@Index('IDX_outbox_events_tenant_created', ['tenantId', 'createdAt'])
-@Index('IDX_outbox_events_tenant_status_created', ['tenantId', 'status', 'createdAt'])
+@Index('IDX_outbox_events_tenant_created', ['tenantId', 'createdAt', 'id'])
+@Index('IDX_outbox_events_tenant_status_created', ['tenantId', 'status', 'createdAt', 'id'])
 @Index('IDX_outbox_events_finished', ['createdAt'], { where: `"status" IN ('delivered', 'dead')` })
 export class OutboxEvent {
   @PrimaryGeneratedColumn('uuid')

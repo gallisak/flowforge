@@ -463,8 +463,10 @@ review`, `... second code review`, `... third code review`. The main ones:
   change, no backpressure, unbounded lists, versions and finished data, slow cron validation, an unbounded
   time-zone cache, a notification lock on every commit, a LISTEN connection never checked.
 - **Scheduler and outbox:** clock changes at midnight or of 30 minutes, a full tenant queue delaying
-  every schedule, a hanging endpoint holding the dispatcher.
-- **Frontend and operations:** forms refusing what the API accepts, cacheable proxy answers, a long
+  every schedule, a hanging endpoint holding the dispatcher, a notification list that walked the
+  finished events of every tenant (newest first) to find 20 of one tenant.
+- **Frontend and operations:** forms refusing what the API accepts, raw API messages and no retry on
+  server rendered error states, cacheable proxy answers, a long
   insecure cookie, no security headers, endless reconnects, no restart policy, CI that never started the
   stack, dependencies with known advisories, tests that could not fail.
 
@@ -494,7 +496,7 @@ passes, puts the starter defect back and requires the same test to fail (all six
 | Idempotency of webhooks and cron | `UQ_executions_tenant_trigger_key (tenantId, triggerKey) WHERE NOT NULL` |
 | Checkpoints, version snapshot | `UQ_step_runs_execution_step`, `UQ_workflow_versions_workflow_version` |
 | Next due schedule | `IDX_workflows_due (COALESCE(scheduleRetryAt, nextRunAt))` (partial) |
-| Due notifications, abandoned deliveries, notifications by state | `IDX_outbox_events_pending_by_tenant`, `_expired_leases`, `_tenant_status_created` |
+| Due notifications, abandoned deliveries, notifications of a tenant (by state) | `IDX_outbox_events_pending_by_tenant`, `_expired_leases`, `_tenant_created`, `_tenant_status_created` (end with `createdAt, id`) |
 | Retention | `IDX_executions_finished`, `IDX_executions_unfinished_version`, `IDX_outbox_events_finished`, `IDX_jobs_execution` |
 
 **How verified:** `test/integration/db/query-plans.int-spec.ts` loads 50 tenants, 5 000 workflows,
@@ -509,8 +511,8 @@ index fails it. `QUERY_PLAN_REPORT=plans.md npx jest query-plans` writes the mea
 ```bash
 cd apps/api && npm ci && npm run lint && npm run typecheck
 npm run test:unit                # 410 tests, no database
-npm run test:int                 # 381 tests, Postgres 16 via Testcontainers (Docker)
-cd ../frontend && npm ci && npm run lint && npm test && npm run build   # 93 tests
+npm run test:int                 # 384 tests, Postgres 16 via Testcontainers (Docker)
+cd ../frontend && npm ci && npm run lint && npm run typecheck && npm test && npm run build   # 95 tests
 cd ../.. && scripts/prove-finding.sh F-03    # red before the fix, green after it
 scripts/mutation/starter-defects.sh          # starter defects without a red commit, by mutation
 ```
@@ -543,11 +545,11 @@ The overlay adds `sink` (`docker/chaos/sink.js`), which applies each effect once
 holds the first `/charge` for 6 s and records notifications, and lets workers reach it through
 `SSRF_ALLOWLIST`. The script runs 10 executions of `reserve → charge → delay 2 s → email` with a
 notification endpoint, sends SIGKILL to both workers while charges are in flight, restarts them and
-exits with an error if any guarantee is broken. Result, the same on every run (Apple M1, Docker 8 CPUs):
+exits with an error if any guarantee is broken. Result, the same on every run except the time (three runs, Apple M1, Docker 8 CPUs):
 
 | Finished after the kill | Succeeded | reserve: attempts / requests / effects | charge | email | Notifications |
 |---|---|---|---|---|---|
-| 35.2–35.8 s | 10 / 10 | 10×1 / 10 / 10 | 2×1 + 8×2 / 18 / 10 | 10×1 / 10 / 10 | 10, all distinct ids |
+| 32.6–37.6 s | 10 / 10 | 10×1 / 10 / 10 | 2×1 + 8×2 / 18 / 10 | 10×1 / 10 / 10 | 10, all distinct ids |
 
 Killed jobs come back after the 30 s lease and the next reaper pass; interrupted charges ran again with
 the same key and were applied once; the reserve step was not repeated. With an idempotency key that
@@ -567,9 +569,9 @@ Docker 8 CPUs.
 | Claim order | B and C while A's backlog drains: p50 / p95 / p99, ms | After it drained: p95, ms |
 |---|---|---|
 | FIFO (baseline) | 16 161 / 31 139 / 32 115 | 238–243 |
-| Round-robin | 15–16 / 35–44 / 743–766 | 222–238 |
+| Round-robin | 14–16 / 32–45 / 720–742 | 244–258 |
 
-The backlog drained at 454 jobs/s on the current code and 622 jobs/s on the baseline, which also lacks
+The backlog drained at 489 jobs/s on the current code and 622 jobs/s on the baseline, which also lacks
 everything added after it (live update triggers, outbox, logging context, metrics, limits), so the
 difference is not the cost of the fair claim alone.
 
@@ -579,7 +581,7 @@ difference is not the cost of the fair claim alone.
 |---|---|---|
 | `apps/api/test/executions.service.spec.ts` (starter) | removed | could not fail (F-02), replaced by a real test |
 | `apps/api/test/job-queue.spec.ts` (starter) | removed two `it.todo` | implemented by F-03 and F-04 |
-| `findings/F-09-*` | 256 KiB output and a 64 KiB limit instead of 8 MB | 8 MB timed out the transform limit under load |
+| `findings/F-09-*` | 256 KiB output and a 64 KiB limit instead of 8 MB; the receiver removes its `drain`/`close` listeners | 8 MB timed out the transform limit under load; the listeners piled up on a slow socket |
 | `findings/F-12-*` | tampers with the signature header only | the F-13 fix added more headers that hid what F-12 checks |
 | `tenancy/tenant-limits.int-spec.ts` | no `429` expected among concurrent requests | the queue limit is soft by design |
 | `findings/F-20-*`, `execution/checkpoints`, `queue/lease` | wait for a state instead of a fixed time | fixed sleeps were flaky |
@@ -587,7 +589,9 @@ difference is not the cost of the fair claim alone.
 | `body-template.spec.ts` | JSON-looking `text/plain` and `application/jsonp` bodies are JSON | such bodies are escaped now |
 | `cron-schedule.spec.ts`, `sandbox.spec.ts`, `config.spec.ts`, `db/query-plans`, `outbox/notifications`, `observability/metrics`, `tenancy/row-level-security` | new names, settings, tables and plan checks | the behaviour they cover was extended |
 | `api/openapi.int-spec.ts`, `tenancy/admin-endpoint.int-spec.ts`, frontend route and page tests, `apps/frontend/test/workflow-form.test.ts` | Express 5 router, request built in one expression, Next.js 15 promise params, `validateWorkflow(values, original)` | framework upgrades, typed lint, the form follows the API rules |
-| `test/support/*` | `bodyParser: false`, workers start retention, role passwords from env, `SCHEDULER_TICK_MS` 59 s | built like `main.ts`; a tick must be shorter than the 60 s grace window |
+| `test/support/*` | `bodyParser: false`, workers start retention, role passwords from env, `SCHEDULER_TICK_MS` 59 s; the context closes workers and apps before it drops the database | built like `main.ts`; a tick must be shorter than the 60 s grace window; Jest runs `afterAll` hooks in declaration order, so the database was dropped under running workers |
+| `db/query-plans` (notifications by state) | `delivered` for a large tenant and for a tenant without such events, instead of `delivering` | `delivering` holds a few leased rows, for which the small lease index is a fine plan, so the test failed at random while missing the real problem |
+| `apps/frontend/test/security-headers.test.ts` | typed `next.config.js`, `filter` instead of `find` | the frontend tests are type checked now |
 
 The other starter tests are unchanged and green.
 

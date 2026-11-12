@@ -45,7 +45,7 @@ export default async function WorkflowsPage({ searchParams }: { searchParams: Pr
           </Button>
         }
       />
-      {failure && <ErrorState title="Could not load workflows" message={failure.message} status={failure.status} />}
+      {failure && <ErrorState title="Could not load workflows" message={failure.message} status={failure.status} refreshable />}
       {!failure && workflows.length === 0 && !cursor && (
         <Card className="flex flex-col items-center gap-3 p-10 text-center">
           <p className="font-medium">No workflows yet</p>
