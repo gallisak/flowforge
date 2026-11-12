@@ -1,9 +1,12 @@
+import { isIP } from 'net';
 import { DatabaseTimeouts } from '../db/data-source';
 import { LOG_LEVELS, LogLevelName } from '../observability/logger';
 
 type Env = Record<string, string | undefined>;
 
 export type NodeEnv = 'development' | 'test' | 'production';
+
+export type TrustProxy = false | number | string[];
 
 export interface ObservabilityConfig {
   logLevel: LogLevelName;
@@ -35,6 +38,8 @@ export interface ApiConfig extends ObservabilityConfig {
   webhookSecretGraceSeconds: number;
   tenantRateLimitPerMinute: number;
   authFailuresPerMinute: number;
+  clientAddressSecret: string;
+  trustProxy: TrustProxy;
   tenantMaxQueuedJobs: number;
   tenantMaxWorkflows: number;
   jobMaxAttempts: number;
@@ -112,6 +117,11 @@ const PRODUCTION_ADMIN_TOKEN_MIN_LENGTH = 32;
 const ADMIN_TOKEN_MIN_LENGTH = 8;
 const DEFAULT_POOL_SIZE = 10;
 const SPARE_WORKER_CONNECTIONS = 2;
+const COMPOSE_STOP_GRACE_PERIOD_MS = 30_000;
+const RELEASE_JOBS_AFTER_GRACE_MS = 5_000;
+const MAX_WORKER_SHUTDOWN_GRACE_MS = COMPOSE_STOP_GRACE_PERIOD_MS - RELEASE_JOBS_AFTER_GRACE_MS;
+const CLIENT_ADDRESS_SECRET_MIN_LENGTH = 32;
+const TRUST_PROXY_KEYWORDS = new Set(['loopback', 'linklocal', 'uniquelocal']);
 const ALLOWLIST_ENTRY = /^(\[[0-9a-f:.]+\]|[a-z0-9-]+(\.[a-z0-9-]+)*\.?)(:\d{1,5})?$/;
 
 class EnvReader {
@@ -181,6 +191,32 @@ class EnvReader {
     return token;
   }
 
+  clientAddressSecret(): string {
+    const secret = this.env.CLIENT_ADDRESS_SECRET ?? '';
+    if (secret.length > 0 && secret.length < CLIENT_ADDRESS_SECRET_MIN_LENGTH) {
+      this.problems.push(`CLIENT_ADDRESS_SECRET must be at least ${CLIENT_ADDRESS_SECRET_MIN_LENGTH} characters`);
+    }
+    return secret;
+  }
+
+  trustProxy(): TrustProxy {
+    const raw = (this.env.TRUST_PROXY ?? '').trim();
+    if (raw === '') return false;
+    if (/^\d+$/.test(raw)) return this.integer('TRUST_PROXY', 0, 0, 10) || false;
+    const entries = raw.split(',').map((entry) => entry.trim().toLowerCase());
+    const valid = entries.every((entry) => {
+      if (TRUST_PROXY_KEYWORDS.has(entry)) return true;
+      const [address, prefix, ...rest] = entry.split('/');
+      const family = isIP(address);
+      if (family === 0 || rest.length > 0) return false;
+      if (prefix === undefined) return true;
+      const bits = Number(prefix);
+      return /^\d+$/.test(prefix) && bits <= (family === 4 ? 32 : 128);
+    });
+    if (!valid) this.problems.push('TRUST_PROXY must be a hop count or a comma separated list of addresses, subnets, loopback, linklocal or uniquelocal');
+    return entries;
+  }
+
   logLevel(): LogLevelName {
     const raw = (this.env.LOG_LEVEL ?? 'info').toLowerCase();
     if (!LOG_LEVELS.includes(raw as LogLevelName)) {
@@ -236,10 +272,13 @@ class EnvReader {
 export function loadApiConfig(env: Env = process.env): ApiConfig {
   const read = new EnvReader(env);
   const nodeEnv = read.nodeEnv();
+  const port = read.integer('PORT', 3000, 0, 65_535);
+  const observability = read.observability();
+  if (port !== 0 && port === observability.metricsPort) read.problems.push('PORT and METRICS_PORT must be different ports');
   return read.done({
     nodeEnv,
-    port: read.integer('PORT', 3000, 0, 65_535),
-    ...read.observability(),
+    port,
+    ...observability,
     metricsTopTenants: read.integer('METRICS_TOP_TENANTS', 20, 1, 1_000),
     executionStreamsPerTenant: read.integer('EXECUTION_STREAMS_PER_TENANT', 20, 1, 10_000),
     executionEventsPingMs: read.integer('EXECUTION_EVENTS_PING_MS', 30_000, 100, 600_000),
@@ -251,6 +290,8 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     webhookSecretGraceSeconds: read.integer('WEBHOOK_SECRET_GRACE_SECONDS', 86_400, 0, 2_592_000),
     tenantRateLimitPerMinute: read.integer('TENANT_RATE_LIMIT_PER_MINUTE', 600, 1, 1_000_000),
     authFailuresPerMinute: read.integer('AUTH_FAILURES_PER_MINUTE', 60, 1, 1_000_000),
+    clientAddressSecret: read.clientAddressSecret(),
+    trustProxy: read.trustProxy(),
     tenantMaxQueuedJobs: read.integer('TENANT_MAX_QUEUED_JOBS', 10_000, 1, 10_000_000),
     tenantMaxWorkflows: read.integer('TENANT_MAX_WORKFLOWS', 1_000, 1, 1_000_000),
     jobMaxAttempts: read.jobMaxAttempts(),
@@ -299,15 +340,20 @@ export function loadWorkerConfig(env: Env = process.env): WorkerConfig {
   if (executionOutputMaxBytes < stepOutputMaxBytes) {
     read.problems.push('EXECUTION_OUTPUT_MAX_BYTES must not be smaller than STEP_OUTPUT_MAX_BYTES');
   }
+  const databaseTimeouts = read.databaseTimeouts();
+  const leaseSeconds = read.integer('WORKER_LEASE_SECONDS', 30, 2, 3_600);
+  if (leaseSeconds * 1_000 <= databaseTimeouts.statementTimeoutMs) {
+    read.problems.push('WORKER_LEASE_SECONDS must be longer than DB_STATEMENT_TIMEOUT_MS');
+  }
   return read.done({
     nodeEnv: read.nodeEnv(),
     databaseUrl: read.postgresUrl('DATABASE_URL'),
-    databaseTimeouts: read.databaseTimeouts(),
+    databaseTimeouts,
     databasePoolSize,
     workerConcurrency,
-    leaseSeconds: read.integer('WORKER_LEASE_SECONDS', 30, 2, 3_600),
+    leaseSeconds,
     reaperIntervalMs: read.integer('WORKER_REAPER_INTERVAL_MS', 5_000, 100, 600_000),
-    shutdownGraceMs: read.integer('WORKER_SHUTDOWN_GRACE_MS', 25_000, 0, 600_000),
+    shutdownGraceMs: read.integer('WORKER_SHUTDOWN_GRACE_MS', 25_000, 0, MAX_WORKER_SHUTDOWN_GRACE_MS),
     retryBaseMs,
     retryCapMs,
     transformTimeoutMs: read.integer('TRANSFORM_TIMEOUT_MS', 100, 10, 10_000),

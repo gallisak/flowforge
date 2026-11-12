@@ -49,6 +49,7 @@ jobs:
         run: |
           cp apps/api/.env.example apps/api/.env
           sed -e "s/^ADMIN_TOKEN=$/ADMIN_TOKEN=$(openssl rand -hex 32)/" \
+              -e "s/^CLIENT_ADDRESS_SECRET=$/CLIENT_ADDRESS_SECRET=$(openssl rand -hex 32)/" \
               -e "s/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" \
               -e "s/^FLOWFORGE_OWNER_PASSWORD=$/FLOWFORGE_OWNER_PASSWORD=$(openssl rand -hex 24)/" \
               -e "s/^FLOWFORGE_APP_PASSWORD=$/FLOWFORGE_APP_PASSWORD=$(openssl rand -hex 24)/" \

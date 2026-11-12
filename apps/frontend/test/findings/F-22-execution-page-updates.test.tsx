@@ -1,6 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExecutionView } from '@/components/execution-view';
+import { RECONNECT_MAX_MS } from '@/lib/use-execution-stream';
 import { FakeEventSource } from '../fake-event-source';
 
 const running = { id: 'exec-1', status: 'running', error: null, steps: [] };
@@ -66,11 +67,16 @@ describe('F-22 the execution page does not leak work or keep updating forever', 
     await advance(1_000);
 
     expect(screen.getAllByText(/succeeded/i)).not.toHaveLength(0);
+    expect(screen.queryByText(/reconnecting/i)).not.toBeInTheDocument();
     const requests = fetchMock.mock.calls.length;
-    await advance(10_000);
+    const connections = FakeEventSource.instances.length;
+    await advance(10 * RECONNECT_MAX_MS);
 
-    expect(fetchMock.mock.calls.length).toBe(requests);
+    expect(FakeEventSource.instances).toHaveLength(connections);
     expect(FakeEventSource.open()).toHaveLength(0);
+    expect(fetchMock.mock.calls.length).toBe(requests);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(screen.queryByText(/reconnecting/i)).not.toBeInTheDocument();
   });
 
   it('never keeps more than one connection or request to the backend open, also while the connection keeps failing', async () => {

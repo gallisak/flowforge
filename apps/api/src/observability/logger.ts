@@ -8,6 +8,7 @@ export type LogLevelName = (typeof LOG_LEVELS)[number];
 const REDACTED_PATHS = [
   'headers["x-api-key"]',
   'headers["x-admin-token"]',
+  'headers["x-client-address-secret"]',
   'headers.authorization',
   'headers.cookie',
   'headers["webhook-signature"]',

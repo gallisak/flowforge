@@ -56,6 +56,15 @@ describe('nextOccurrence', () => {
     ]);
   });
 
+  it.each(['30 0-23 * * *', '30 0/1 * * *', '30 * * * *'])('runs %s through both passes of the repeated autumn hour', (cron) => {
+    expect(chain({ cron, timezone: 'America/New_York' }, '2026-11-01T04:30:00Z', 4)).toEqual([
+      '2026-11-01T04:30:00.000Z',
+      '2026-11-01T05:30:00.000Z',
+      '2026-11-01T06:30:00.000Z',
+      '2026-11-01T07:30:00.000Z',
+    ]);
+  });
+
   it('runs an interval schedule by elapsed time across the autumn change, without duplicates', () => {
     const runs = chain({ cron: '*/30 * * * *', timezone: 'America/New_York' }, '2026-11-01T05:00:00Z', 5);
 
@@ -120,6 +129,14 @@ describe('planFiring', () => {
 
     expect(iso(result.fire)).toEqual(['2026-11-20T17:00:00.000Z', '2026-11-20T18:00:00.000Z', '2026-11-20T19:00:00.000Z']);
     expect(result.skippedRuns).toBe(7);
+  });
+
+  it('reports dropped runs when the catch-up limit is as large as the counting cap', () => {
+    const result = plan('all', '2026-11-15T10:00:00Z', '2026-11-20T10:00:30Z');
+
+    expect(result.fire).toHaveLength(101);
+    expect(result.skippedRuns).toBe(20);
+    expect(result.skippedRunsCapped).toBe(false);
   });
 
   it('does not report dropped runs when the missed runs fit the limit exactly', () => {

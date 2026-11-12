@@ -1,4 +1,5 @@
-import { Check, Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Execution } from './execution.entity';
 
 export const OUTBOX_EVENT_STATUSES = ['pending', 'delivering', 'delivered', 'dead'] as const;
 export type OutboxEventStatus = (typeof OUTBOX_EVENT_STATUSES)[number];
@@ -20,6 +21,13 @@ export class OutboxEvent {
 
   @Column('uuid')
   executionId: string;
+
+  @ManyToOne(() => Execution, { onDelete: 'CASCADE' })
+  @JoinColumn([
+    { name: 'tenantId', referencedColumnName: 'tenantId', foreignKeyConstraintName: 'FK_outbox_events_execution' },
+    { name: 'executionId', referencedColumnName: 'id', foreignKeyConstraintName: 'FK_outbox_events_execution' },
+  ])
+  execution?: Execution;
 
   @Column({ type: 'varchar', length: 64 })
   type: string;

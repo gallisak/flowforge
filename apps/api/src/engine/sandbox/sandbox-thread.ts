@@ -45,9 +45,12 @@ function runnerSource(outputMaxChars) {
   return '(function () {' +
     ' const parse = JSON.parse; const stringify = JSON.stringify; const toText = String;' +
     ' const input = globalThis.__input; delete globalThis.__input;' +
+    ' const NativePromise = Promise;' +
+    ' const isThenable = (value) => value instanceof NativePromise ||' +
+    '   (value !== null && (typeof value === "object" || typeof value === "function") && typeof value.then === "function");' +
     ' return function (transform) {' +
     '   let out;' +
-    '   try { out = stringify(transform(parse(input))); }' +
+    '   try { const value = transform(parse(input)); if (isThenable(value)) return "P"; out = stringify(value); }' +
     '   catch (thrown) {' +
     '     let name = "Error"; let message = "";' +
     '     try { name = toText((thrown && thrown.name) || "Error"); } catch (ignored) {}' +
@@ -112,6 +115,8 @@ function evaluate(QuickJS, request) {
     const text = textOf(vm, result.value, request.limits.outputMaxChars + 1);
     if (text[0] === 'E') {
       reply = { error: describeThrown(text.slice(1), request.limits) };
+    } else if (text === 'P') {
+      reply = { error: 'transform must return a value, not a promise' };
     } else if (text[0] === 'L') {
       reply = { outputTooLarge: true };
     } else {
@@ -125,7 +130,14 @@ function evaluate(QuickJS, request) {
   return reply;
 }
 
+const WARM_UP = {
+  expr: '[ctx].map((value) => value)',
+  input: '{}',
+  limits: { timeoutMs: 1000, memoryBytes: 8 * 1024 * 1024, stackBytes: 48 * 1024, outputMaxChars: 1024 },
+};
+
 newQuickJSWASMModule().then((QuickJS) => {
+  evaluate(QuickJS, WARM_UP);
   parentPort.on('message', (request) => {
     let reply;
     try {

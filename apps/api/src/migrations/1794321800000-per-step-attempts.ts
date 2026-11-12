@@ -3,7 +3,7 @@ import { REAPER_RESULT } from './1794320800000-execution-notifications';
 import { EXPIRE_JOBS_AND_RELEASE_STATES, reaperFunction } from './1794321200000-reaper-releases-interrupted-steps';
 
 const LEASE_EXPIRED = 'lease expired: the worker stopped renewing its lease';
-const REAPER_SIGNATURE = 'reap_expired_jobs(integer, integer)';
+export const PER_STEP_REAPER_SIGNATURE = 'reap_expired_jobs(integer, integer)';
 
 const EXPIRE_JOBS_WITH_BACKOFF = `
   WITH expired AS (
@@ -51,14 +51,7 @@ const EXPIRE_JOBS_WITH_BACKOFF = `
   SELECT * FROM reaped
 `;
 
-export class PerStepAttempts1794321800000 implements MigrationInterface {
-  name = 'PerStepAttempts1794321800000';
-
-  public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`ALTER TABLE "jobs" ADD COLUMN "attemptsAtProgress" integer NOT NULL DEFAULT 0`);
-    await queryRunner.query(`ALTER TABLE "jobs" ALTER COLUMN "maxAttempts" SET DEFAULT 8`);
-    await queryRunner.query(`DROP FUNCTION reap_expired_jobs()`);
-    await queryRunner.query(`
+export const PER_STEP_REAPER = `
       CREATE FUNCTION reap_expired_jobs(p_retry_base_ms integer DEFAULT 1000, p_retry_cap_ms integer DEFAULT 300000)
         RETURNS TABLE ${REAPER_RESULT}
         LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
@@ -82,13 +75,22 @@ export class PerStepAttempts1794321800000 implements MigrationInterface {
           PERFORM record_execution_event(dead) FROM unnest(dead_executions) AS dead;
         END
         $$
-    `);
-    await queryRunner.query(`REVOKE ALL ON FUNCTION ${REAPER_SIGNATURE} FROM PUBLIC`);
-    await queryRunner.query(`GRANT EXECUTE ON FUNCTION ${REAPER_SIGNATURE} TO flowforge_app`);
+    `;
+
+export class PerStepAttempts1794321800000 implements MigrationInterface {
+  name = 'PerStepAttempts1794321800000';
+
+  public async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.query(`ALTER TABLE "jobs" ADD COLUMN "attemptsAtProgress" integer NOT NULL DEFAULT 0`);
+    await queryRunner.query(`ALTER TABLE "jobs" ALTER COLUMN "maxAttempts" SET DEFAULT 8`);
+    await queryRunner.query(`DROP FUNCTION reap_expired_jobs()`);
+    await queryRunner.query(PER_STEP_REAPER);
+    await queryRunner.query(`REVOKE ALL ON FUNCTION ${PER_STEP_REAPER_SIGNATURE} FROM PUBLIC`);
+    await queryRunner.query(`GRANT EXECUTE ON FUNCTION ${PER_STEP_REAPER_SIGNATURE} TO flowforge_app`);
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP FUNCTION ${REAPER_SIGNATURE}`);
+    await queryRunner.query(`DROP FUNCTION ${PER_STEP_REAPER_SIGNATURE}`);
     await queryRunner.query(reaperFunction(EXPIRE_JOBS_AND_RELEASE_STATES));
     await queryRunner.query(`REVOKE ALL ON FUNCTION reap_expired_jobs() FROM PUBLIC`);
     await queryRunner.query(`GRANT EXECUTE ON FUNCTION reap_expired_jobs() TO flowforge_app`);

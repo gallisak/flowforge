@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { errorFrom } from '@/lib/api-error';
+import { errorFrom, failureMessage } from '@/lib/api-error';
 
 export default function ConnectPage() {
   const router = useRouter();
@@ -29,7 +29,7 @@ export default function ConnectPage() {
       router.push('/workflows');
       router.refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setError(failureMessage(err));
       setBusy(false);
     }
   }

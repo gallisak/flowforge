@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-const CLAIM_JOB_SKIPPING_FUTURE_JOBS = `
+export const CLAIM_JOB_SKIPPING_FUTURE_JOBS = `
   CREATE OR REPLACE FUNCTION claim_job(p_worker_id text, p_lease_seconds integer, p_default_max_running integer DEFAULT 10)
     RETURNS SETOF "jobs"
     LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp

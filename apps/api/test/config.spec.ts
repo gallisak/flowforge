@@ -29,6 +29,8 @@ describe('loadApiConfig', () => {
       executionStreamsPerTenant: 20,
       executionEventsPingMs: 30_000,
       authFailuresPerMinute: 60,
+      clientAddressSecret: '',
+      trustProxy: false,
       jobMaxAttempts: 8,
       webhookToleranceSeconds: 300,
       webhookSecretGraceSeconds: 86_400,
@@ -100,6 +102,27 @@ describe('loadApiConfig', () => {
       throw new Error('expected loadApiConfig to throw');
     })();
     expect(error.message).not.toMatch(/secret-password|change-me-admin/);
+  });
+
+  it('reads a shared client address secret and rejects a short one', () => {
+    const secret = 'x'.repeat(32);
+    expect(loadApiConfig({ DATABASE_URL, ADMIN_TOKEN: 'dev-admin-token', CLIENT_ADDRESS_SECRET: secret }).clientAddressSecret).toBe(secret);
+    expect(problemsOf(() => loadApiConfig({ DATABASE_URL, ADMIN_TOKEN: 'dev-admin-token', CLIENT_ADDRESS_SECRET: 'short' }))).toEqual([
+      'CLIENT_ADDRESS_SECRET must be at least 32 characters',
+    ]);
+  });
+
+  it.each([
+    ['1', 1],
+    ['0', false],
+    ['loopback, 10.0.0.0/8', ['loopback', '10.0.0.0/8']],
+    ['fd00::/8,172.18.0.1', ['fd00::/8', '172.18.0.1']],
+  ])('reads TRUST_PROXY=%s', (value, expected) => {
+    expect(loadApiConfig({ DATABASE_URL, ADMIN_TOKEN: 'dev-admin-token', TRUST_PROXY: value }).trustProxy).toEqual(expected);
+  });
+
+  it.each(['everyone', '10.0.0.0/33', '11', 'host.example'])('rejects TRUST_PROXY=%s', (value) => {
+    expect(problemsOf(() => loadApiConfig({ DATABASE_URL, ADMIN_TOKEN: 'dev-admin-token', TRUST_PROXY: value })).length).toBe(1);
   });
 
   it('returns an immutable config object', () => {

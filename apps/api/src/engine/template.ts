@@ -8,6 +8,7 @@ const FIXED_ORIGIN = /^(https?:\/\/[^/?#{}\s]+)[/?#]/i;
 const INHERITED_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 
 export class UrlTemplateError extends Error {}
+export class BodyTemplateError extends Error {}
 
 function lookup(ctx: StepContext, path: string): unknown {
   let cur: unknown = ctx;
@@ -108,19 +109,41 @@ function textOf(value: unknown): string {
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
-function renderJsonTemplate(template: string, ctx: StepContext, limit: RenderLimit): string {
-  let inString = false;
-  let escaped = false;
-  return renderWith(template, limit, (path, literal) => {
+export const UNFINISHED_JSON_ESCAPE = 'a backslash must not come right before a placeholder inside a JSON string';
+
+class JsonStringTracker {
+  inString = false;
+  private escaped = false;
+
+  endsInsideEscape(literal: string): boolean {
     for (const char of literal) {
-      if (escaped) escaped = false;
-      else if (inString && char === '\\') escaped = true;
-      else if (char === '"') inString = !inString;
+      if (this.escaped) this.escaped = false;
+      else if (this.inString && char === '\\') this.escaped = true;
+      else if (char === '"') this.inString = !this.inString;
     }
-    escaped = false;
+    const unfinished = this.escaped;
+    this.escaped = false;
+    return unfinished;
+  }
+}
+
+function renderJsonTemplate(template: string, ctx: StepContext, limit: RenderLimit): string {
+  const tracker = new JsonStringTracker();
+  return renderWith(template, limit, (path, literal) => {
+    if (tracker.endsInsideEscape(literal)) throw new BodyTemplateError(UNFINISHED_JSON_ESCAPE);
     const value = lookup(ctx, path);
-    return inString ? JSON.stringify(textOf(value)).slice(1, -1) : JSON.stringify(value ?? null);
+    return tracker.inString ? JSON.stringify(textOf(value)).slice(1, -1) : JSON.stringify(value ?? null);
   }).toString();
+}
+
+export function hasUnfinishedJsonEscape(template: string): boolean {
+  const tracker = new JsonStringTracker();
+  let last = 0;
+  for (const match of template.matchAll(new RegExp(PLACEHOLDER.source, 'g'))) {
+    if (tracker.endsInsideEscape(template.slice(last, match.index))) return true;
+    last = match.index + match[0].length;
+  }
+  return false;
 }
 
 export function renderBodyTemplate(template: string, ctx: StepContext, format: BodyFormat, maxLength: number = RENDERED_LIMITS.body): string {
@@ -153,8 +176,11 @@ function hasDotSegment(url: string): boolean {
   return path.split('/').some((segment) => DOT_SEGMENT.test(segment));
 }
 
+export const URL_BACKSLASH = 'http url must not contain a backslash';
+
 export function renderUrlTemplate(template: string, ctx: StepContext): string {
   if (!hasPlaceholders(template)) return template;
+  if (template.includes('\\')) throw new UrlTemplateError(URL_BACKSLASH);
   const origin = fixedOriginOf(template);
   if (!origin) throw new UrlTemplateError('http url template must start with a fixed origin');
   const rendered = renderTemplate(template, ctx, encodeURIComponent, { maxLength: RENDERED_LIMITS.url, what: 'http url' });

@@ -23,6 +23,10 @@ export class WorkerShutdownError extends Error {
   }
 }
 
+export const LEASE_NOT_RENEWED = 'the worker could not renew its lease in time; the attempt will be retried';
+
+class LeaseNotRenewedError extends LeaseLostError {}
+
 @Injectable()
 export class JobRunnerService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(JobRunnerService.name);
@@ -117,23 +121,28 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     const leaseMs = this.config.leaseSeconds * 1000;
     const marginMs = Math.min(LEASE_DEADLINE_MARGIN_MS, leaseMs / 10);
     const timers: { heartbeat?: NodeJS.Timeout; deadline?: NodeJS.Timeout } = {};
-    const loseLease = () => {
-      if (!lease.signal.aborted) lease.abort(new LeaseLostError(job.id));
+    let settled = false;
+    const loseLease = (reason: LeaseLostError) => {
+      if (!lease.signal.aborted) lease.abort(reason);
     };
     const leaseRenewedAt = (renewalSentAt: number) => {
+      if (settled) return;
       clearTimeout(timers.deadline);
-      timers.deadline = setTimeout(loseLease, Math.max(0, renewalSentAt + leaseMs - marginMs - Date.now()));
+      timers.deadline = setTimeout(
+        () => loseLease(new LeaseNotRenewedError(job.id)),
+        Math.max(0, renewalSentAt + leaseMs - marginMs - Date.now()),
+      );
     };
     const beat = () => {
       timers.heartbeat = setTimeout(async () => {
         const sentAt = Date.now();
         try {
           if (await this.queue.extendLease(job, this.workerId, this.config.leaseSeconds)) leaseRenewedAt(sentAt);
-          else loseLease();
+          else loseLease(new LeaseLostError(job.id));
         } catch (err) {
           this.logger.warn(`could not renew lease on job ${job.id}: ${(err as Error).message}`);
         }
-        if (!lease.signal.aborted && this.inFlight.get(job.id) === lease) beat();
+        if (!settled && !lease.signal.aborted) beat();
       }, leaseMs / 3);
     };
     leaseRenewedAt(claimStartedAt);
@@ -141,9 +150,10 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     try {
       await this.process(job, lease.signal);
     } finally {
+      settled = true;
       clearTimeout(timers.heartbeat);
       clearTimeout(timers.deadline);
-      this.inFlight.delete(job.id);
+      if (this.inFlight.get(job.id) === lease) this.inFlight.delete(job.id);
     }
   }
 
@@ -229,6 +239,13 @@ export class JobRunnerService implements BeforeApplicationShutdown {
       this.logger.log('execution succeeded');
     } catch (err) {
       const leaseLost = err instanceof LeaseLostError ? err : signal?.reason instanceof LeaseLostError ? signal.reason : null;
+      if (leaseLost instanceof LeaseNotRenewedError) {
+        this.logger.warn(`${leaseLost.message}: ${LEASE_NOT_RENEWED}`);
+        await this.recordFailure(job, LEASE_NOT_RENEWED, true).catch((error: Error) =>
+          this.logger.warn(`could not return job ${job.id} to the queue: ${error.message}`),
+        );
+        return;
+      }
       if (leaseLost) {
         this.logger.warn(leaseLost.message);
         return;

@@ -13,6 +13,8 @@ export function formatDuration(from: string | null | undefined, to: string | nul
   const ms = new Date(to).getTime() - new Date(from).getTime();
   if (!Number.isFinite(ms) || ms < 0) return '—';
   if (ms < 1_000) return `${ms} ms`;
-  if (ms < 60_000) return `${(ms / 1_000).toFixed(1)} s`;
-  return `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1_000)} s`;
+  const tenthsOfSecond = Math.round(ms / 100);
+  if (tenthsOfSecond < 600) return `${(tenthsOfSecond / 10).toFixed(1)} s`;
+  const seconds = Math.round(ms / 1_000);
+  return `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }

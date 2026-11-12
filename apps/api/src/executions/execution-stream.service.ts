@@ -16,6 +16,7 @@ export const STREAM_BUFFER_LIMIT_BYTES = 2 * 1024 * 1024;
 export const STREAM_STALL_LIMIT_MS = 60_000;
 const WATCH_SECONDS = 120;
 const WATCH_RENEW_MS = 60_000;
+const WATCH_RETRY_MS = 5_000;
 const WATCH_SETTLE_MS = 1_000;
 
 interface Frame {
@@ -87,10 +88,8 @@ export class ExecutionStreamService implements BeforeApplicationShutdown {
         failures: 0,
       };
       created.unsubscribe = this.hub.subscribe(executionId, () => this.scheduleRefresh(created));
-      created.watch = setInterval(() => {
-        this.executions.watch(tenantId, executionId, WATCH_SECONDS).catch(() => undefined);
-      }, WATCH_RENEW_MS);
       this.feeds.set(key, created);
+      this.renewWatch(created, false);
       feed = created;
     }
     const joined = feed;
@@ -102,9 +101,24 @@ export class ExecutionStreamService implements BeforeApplicationShutdown {
       joined.unsubscribe();
       clearTimeout(joined.coalesce);
       clearTimeout(joined.retry);
-      clearInterval(joined.watch);
+      clearTimeout(joined.watch);
     };
     return { feed: joined, leave };
+  }
+
+  private renewWatch(feed: Feed, lastRenewalFailed: boolean): void {
+    feed.watch = setTimeout(
+      async () => {
+        const renewed = await this.executions.watch(feed.tenantId, feed.executionId, WATCH_SECONDS).then(
+          () => true,
+          () => false,
+        );
+        if (this.feeds.get(feed.key) !== feed) return;
+        if (renewed && lastRenewalFailed) this.scheduleRefresh(feed);
+        this.renewWatch(feed, !renewed);
+      },
+      lastRenewalFailed ? WATCH_RETRY_MS : WATCH_RENEW_MS,
+    );
   }
 
   private scheduleRefresh(feed: Feed): void {

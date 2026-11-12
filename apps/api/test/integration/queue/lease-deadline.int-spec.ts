@@ -12,10 +12,15 @@ describe('a worker whose lease renewals hang', () => {
   let workers: InProcessWorkers;
   let requestedAt = 0;
   let abortedAt = 0;
-  const saved = { lease: process.env.WORKER_LEASE_SECONDS, reaper: process.env.WORKER_REAPER_INTERVAL_MS };
+  const saved = {
+    lease: process.env.WORKER_LEASE_SECONDS,
+    statement: process.env.DB_STATEMENT_TIMEOUT_MS,
+    reaper: process.env.WORKER_REAPER_INTERVAL_MS,
+  };
 
   beforeAll(async () => {
     process.env.WORKER_LEASE_SECONDS = '3';
+    process.env.DB_STATEMENT_TIMEOUT_MS = '1500';
     process.env.WORKER_REAPER_INTERVAL_MS = '600000';
     jest.spyOn(JobQueueService.prototype, 'extendLease').mockImplementation(() => new Promise<boolean>(() => undefined));
     receiver = await startReceiver((_req, res) => {
@@ -34,6 +39,7 @@ describe('a worker whose lease renewals hang', () => {
     await receiver?.close();
     for (const [name, value] of [
       ['WORKER_LEASE_SECONDS', saved.lease],
+      ['DB_STATEMENT_TIMEOUT_MS', saved.statement],
       ['WORKER_REAPER_INTERVAL_MS', saved.reaper],
     ] as const) {
       if (value === undefined) delete process.env[name];

@@ -36,10 +36,11 @@ async function recordExecutionEvent(em: EntityManager, executionId: string): Pro
   await em.query('SELECT record_execution_event($1)', [executionId]);
 }
 
-async function failInterruptedStep(em: EntityManager, executionId: string, error: string): Promise<void> {
+async function failInterruptedStep(em: EntityManager, executionId: string, error: string, alsoSleeping = false): Promise<void> {
+  const statuses = alsoSleeping ? ['running', 'waiting'] : ['running'];
   await em.query(
-    `UPDATE step_runs SET "status" = 'failed', "error" = $2, "finishedAt" = now() WHERE "executionId" = $1 AND "status" = 'running'`,
-    [executionId, error],
+    `UPDATE step_runs SET "status" = 'failed', "error" = $2, "finishedAt" = now() WHERE "executionId" = $1 AND "status" = ANY ($3)`,
+    [executionId, error, statuses],
   );
 }
 
@@ -89,7 +90,7 @@ export class JobQueueService {
           : { ...released, status: outcome },
       );
       if (result.affected !== 1) return 'lost';
-      await failInterruptedStep(em, job.executionId, error);
+      await failInterruptedStep(em, job.executionId, error, outcome !== 'retry');
       if (outcome === 'retry') {
         await em.update(Execution, job.executionId, { status: 'pending', error });
       }

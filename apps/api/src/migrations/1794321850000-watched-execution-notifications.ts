@@ -29,6 +29,19 @@ function notifyFunction(onlyWatched: boolean): string {
   `;
 }
 
+export const WATCH_EXECUTION = `
+      CREATE FUNCTION watch_execution(p_execution_id uuid, p_seconds integer) RETURNS boolean
+        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
+        AS $$
+          INSERT INTO "execution_watches" ("executionId", "expiresAt")
+          SELECT e."id", now() + make_interval(secs => p_seconds)
+            FROM "executions" e
+           WHERE e."id" = p_execution_id AND e."tenantId" = app_current_tenant()
+          ON CONFLICT ("executionId") DO UPDATE SET "expiresAt" = GREATEST("execution_watches"."expiresAt", EXCLUDED."expiresAt")
+          RETURNING true
+        $$
+    `;
+
 export class WatchedExecutionNotifications1794321850000 implements MigrationInterface {
   name = 'WatchedExecutionNotifications1794321850000';
 
@@ -40,18 +53,7 @@ export class WatchedExecutionNotifications1794321850000 implements MigrationInte
       )
     `);
     await queryRunner.query(`REVOKE ALL ON TABLE "execution_watches" FROM flowforge_app`);
-    await queryRunner.query(`
-      CREATE FUNCTION watch_execution(p_execution_id uuid, p_seconds integer) RETURNS boolean
-        LANGUAGE sql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp
-        AS $$
-          INSERT INTO "execution_watches" ("executionId", "expiresAt")
-          SELECT e."id", now() + make_interval(secs => p_seconds)
-            FROM "executions" e
-           WHERE e."id" = p_execution_id AND e."tenantId" = app_current_tenant()
-          ON CONFLICT ("executionId") DO UPDATE SET "expiresAt" = GREATEST("execution_watches"."expiresAt", EXCLUDED."expiresAt")
-          RETURNING true
-        $$
-    `);
+    await queryRunner.query(WATCH_EXECUTION);
     await queryRunner.query(`REVOKE ALL ON FUNCTION ${WATCH_SIGNATURE} FROM PUBLIC`);
     await queryRunner.query(`GRANT EXECUTE ON FUNCTION ${WATCH_SIGNATURE} TO flowforge_app`);
     await queryRunner.query(notifyFunction(true));

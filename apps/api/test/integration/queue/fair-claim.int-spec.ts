@@ -62,7 +62,11 @@ describe('fair job claim', () => {
   it('moves on to the next tenant while another worker is claiming for the first one', async () => {
     const first = await tenantWithJobs('first', 2);
     const second = await tenantWithJobs('second', 2);
-    await ctx.ds.query(`INSERT INTO tenant_queue_state ("tenantId", "lastClaimedAt") VALUES ($1, NULL), ($2, now())`, [first, second]);
+    await ctx.ds.query(
+      `INSERT INTO tenant_queue_state ("tenantId", "lastClaimedAt") VALUES ($1, NULL), ($2, now())
+       ON CONFLICT ("tenantId") DO UPDATE SET "lastClaimedAt" = EXCLUDED."lastClaimedAt"`,
+      [first, second],
+    );
 
     const holder = new Client({ connectionString: ctx.db.adminUrl });
     await holder.connect();

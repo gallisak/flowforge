@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { fixedOriginOf } from '../engine/template';
+import { bodyFormatOf, fixedOriginOf, hasUnfinishedJsonEscape, UNFINISHED_JSON_ESCAPE } from '../engine/template';
 import { StepDefinition } from '../entities';
 
 const STEP_TYPES = ['http', 'transform', 'log', 'delay'] as const;
@@ -35,6 +35,7 @@ function validateHttpStep(step: Record<string, unknown>, at: string): void {
   if (!fixedOriginOf(step.url)) {
     invalid(`${at}.url must start with a fixed http or https origin; placeholders are allowed only in the path, query or fragment`);
   }
+  if (step.url.includes('\\')) invalid(`${at}.url must not contain a backslash`);
   if (step.method !== undefined && !HTTP_METHODS.includes(step.method as (typeof HTTP_METHODS)[number])) {
     invalid(`${at}.method must be one of ${HTTP_METHODS.join(', ')}`);
   }
@@ -58,6 +59,9 @@ function validateHttpStep(step: Record<string, unknown>, at: string): void {
   if (step.body !== undefined) {
     if (typeof step.body !== 'string') invalid(`${at}.body must be a string`);
     if (step.body.length > STEP_LIMITS.bodyLength) invalid(`${at}.body must be at most ${STEP_LIMITS.bodyLength} characters`);
+    if (bodyFormatOf(step.body, step.headers as Record<string, string> | undefined) === 'json' && hasUnfinishedJsonEscape(step.body)) {
+      invalid(`${at}.body: ${UNFINISHED_JSON_ESCAPE}`);
+    }
   }
 }
 

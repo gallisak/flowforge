@@ -1,4 +1,5 @@
 export const MAX_PROXY_BODY_BYTES = 1_048_576;
+export const MAX_PROXY_RESPONSE_BYTES = 32 * 1024 * 1024;
 export const MAX_CONNECT_BODY_BYTES = 4_096;
 
 export class BodyTooLargeError extends Error {

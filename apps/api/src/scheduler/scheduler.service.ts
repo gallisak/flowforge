@@ -1,10 +1,12 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { EntityManager } from 'typeorm';
 import { SCHEDULER_CONFIG, SchedulerConfig } from '../config/config';
 import { DueSchedule, TenantDb } from '../db/tenant-db.service';
 import { Workflow } from '../entities';
 import { ExecutionsService } from '../executions/executions.service';
 import { TooManyRequestsException } from '../limits/too-many-requests';
+import { runWithLogContext } from '../observability/log-context';
 import { metrics } from '../observability/metrics';
 import { planFiring } from './cron-schedule';
 
@@ -55,9 +57,9 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
   }
 
   async tick(): Promise<number> {
-    const now = new Date();
     let fired = 0;
     while (!this.stopped) {
+      const now = new Date();
       const current: { schedule?: DueSchedule } = {};
       try {
         const outcome = await this.db.claimDueSchedule(now, (schedule, em) => {
@@ -69,15 +71,20 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
         metrics.scheduledRuns.inc({ outcome: 'started' }, outcome.result);
       } catch (error) {
         if (!current.schedule) throw error;
-        const { id, tenantId } = current.schedule;
-        await this.db.run(tenantId, (em) => this.postpone(em, { id, tenantId }, now));
+        const { id, tenantId, nextRunAt } = current.schedule;
+        await this.db.run(tenantId, (em) => this.postpone(em, { id, tenantId, nextRunAt }, now));
         this.logger.warn(`workflow ${id}: scheduled run postponed (${(error as Error).message})`);
       }
     }
     return fired;
   }
 
-  private async postpone(em: EntityManager, workflow: Pick<Workflow, 'id' | 'tenantId'>, now: Date, nextRunAt?: Date): Promise<void> {
+  private async postpone(
+    em: EntityManager,
+    workflow: Pick<Workflow, 'id' | 'tenantId'> & Partial<Pick<Workflow, 'nextRunAt'>>,
+    now: Date,
+    nextRunAt?: Date,
+  ): Promise<void> {
     const scheduleRetryAt = new Date(now.getTime() + this.config.schedulerPostponeMs);
     await em.update(Workflow, workflow, nextRunAt ? { nextRunAt, scheduleRetryAt } : { scheduleRetryAt });
     metrics.scheduledRuns.inc({ outcome: 'postponed' });
@@ -97,22 +104,18 @@ export class SchedulerService implements OnApplicationBootstrap, OnApplicationSh
       );
     }
     let started = 0;
-    for (const scheduledAt of plan.fire) {
+    for (const [index, scheduledAt] of plan.fire.entries()) {
       try {
-        await this.executions.enqueueWithin(
-          em,
-          schedule,
-          { scheduledAt: scheduledAt.toISOString() },
-          'cron',
-          cronTriggerKey(schedule.id, scheduledAt),
+        const { created } = await runWithLogContext({ correlationId: randomUUID(), tenantId: schedule.tenantId }, () =>
+          this.executions.enqueueWithin(em, schedule, { scheduledAt: scheduledAt.toISOString() }, 'cron', cronTriggerKey(schedule.id, scheduledAt)),
         );
+        if (created) started++;
       } catch (error) {
         if (!(error instanceof TooManyRequestsException)) throw error;
-        this.logger.warn(`workflow ${schedule.id}: queue limit reached, ${plan.fire.length - started} scheduled runs postponed`);
+        this.logger.warn(`workflow ${schedule.id}: queue limit reached, ${plan.fire.length - index} scheduled runs postponed`);
         await this.postpone(em, workflow, now, scheduledAt);
         return started;
       }
-      started++;
     }
     await em.update(Workflow, workflow, { nextRunAt: plan.nextRunAt, scheduleRetryAt: null });
     return started;

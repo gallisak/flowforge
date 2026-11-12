@@ -123,12 +123,13 @@ describe('query plans of the hot paths on a realistically sized database', () =>
         INSERT INTO "workflow_versions" ("tenantId", "workflowId", "version", "steps")
         SELECT w."tenantId", w."id", 1, w."steps" FROM "workflows" w`);
       await em.query(`
-        INSERT INTO "executions" ("id", "tenantId", "workflowId", "status", "input", "triggerKey", "createdAt")
+        INSERT INTO "executions" ("id", "tenantId", "workflowId", "status", "input", "triggerKey", "createdAt", "finishedAt")
         SELECT ${sqlId('20', 'e')}, ${sqlId('00', `((e - 1) % ${TENANTS}) + 1`)}, ${sqlId('10', `(((e - 1) / ${TENANTS}) % 20) * ${TENANTS} + ((e - 1) % ${TENANTS}) + 1`)},
                CASE WHEN e <= ${QUEUED_JOBS} THEN 'pending' WHEN (e / ${TENANTS}) % 10 = 0 THEN 'failed' ELSE 'succeeded' END,
                '{}'::jsonb,
                CASE WHEN e % 5 = 0 THEN 'webhook:' || e END,
-               now() - e * interval '1 second'
+               now() - e * interval '1 second',
+               CASE WHEN e > ${QUEUED_JOBS} AND e % 3 = 0 THEN now() - interval '40 days' - e * interval '1 second' END
           FROM generate_series(1, ${EXECUTIONS}) e`);
       await em.query(`
         INSERT INTO "jobs" ("tenantId", "executionId", "status", "runAt", "lockedBy", "lockedUntil", "attempts")
@@ -165,6 +166,7 @@ describe('query plans of the hot paths on a realistically sized database', () =>
         INSERT INTO "outbox_events" ("tenantId", "executionId", "type", "payload", "status", "nextAttemptAt")
         SELECT '${SLEEPING_TENANT}', ${sqlId('30', 'e')}, 'execution.failed', '{}'::jsonb, 'pending', now() + interval '1 hour'
           FROM generate_series(1, ${SLEEPING_JOBS}) e`);
+      await em.query(`INSERT INTO "tenant_queue_state" ("tenantId") SELECT DISTINCT "tenantId" FROM "jobs" WHERE "status" = 'queued' ON CONFLICT DO NOTHING`);
     });
     for (const table of ['tenants', ...LARGE_TABLES]) await ctx.ds.query(`VACUUM ANALYZE "${table}"`);
   }
@@ -209,10 +211,10 @@ describe('query plans of the hot paths on a realistically sized database', () =>
   it('captures the plans of statements inside the database functions', async () => {
     const plans = await plansOf('claim a job', () => db.claimJob('worker-plans', 30, 10));
 
-    expect(plans.some((p) => p.query.includes('WITH RECURSIVE ready'))).toBe(true);
+    expect(plans.some((p) => p.query.includes('FROM "tenant_queue_state" s'))).toBe(true);
   });
 
-  it('claims a job through a skip scan over tenants with ready jobs and the oldest ready job of one tenant', async () => {
+  it('claims a job from the tenants that may have ready jobs and the oldest ready job of one tenant', async () => {
     const plans = await plansOf('claim a job', () => db.claimJob('worker-plans', 30, 10));
 
     expectIndexed(plans, 'IDX_jobs_queued_by_tenant');
@@ -325,6 +327,8 @@ describe('query plans of the hot paths on a realistically sized database', () =>
   it('finds finished executions and notifications to purge from their partial indexes', async () => {
     const plans = await plansOf('purge finished data', () => db.purgeFinishedData(30, 1_000));
 
+    expect(await ctx.ds.query(`SELECT 1 FROM "executions" WHERE "finishedAt" < now() - interval '30 days' LIMIT 1`)).toHaveLength(1);
+    expect(seqScansOfLargeTables(plans)).not.toContain('outbox_events');
     expect(indexesOf(plans)).toEqual(expect.arrayContaining(['IDX_executions_finished', 'IDX_outbox_events_finished']));
     expect(seqScansOfLargeTables(plans).filter((table) => !['workflows', 'workflow_versions'].includes(table))).toEqual([]);
   });

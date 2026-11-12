@@ -1,4 +1,4 @@
-import { ConfigError, loadSchedulerConfig, loadWorkerConfig } from '../src/config/config';
+import { ConfigError, loadApiConfig, loadSchedulerConfig, loadWorkerConfig } from '../src/config/config';
 
 const base = { DATABASE_URL: 'postgres://flowforge_app:secret-password@localhost:5432/flowforge' };
 
@@ -28,6 +28,27 @@ describe('configuration cross-checks', () => {
     expect(problemsOf(() => loadWorkerConfig({ ...base, STEP_OUTPUT_MAX_BYTES: '2048', EXECUTION_OUTPUT_MAX_BYTES: '1024' }))).toEqual([
       'EXECUTION_OUTPUT_MAX_BYTES must not be smaller than STEP_OUTPUT_MAX_BYTES',
     ]);
+  });
+
+  it('refuses a job lease that a single slow statement can outlive', () => {
+    expect(problemsOf(() => loadWorkerConfig({ ...base, WORKER_LEASE_SECONDS: '10', DB_STATEMENT_TIMEOUT_MS: '10000' }))).toEqual([
+      'WORKER_LEASE_SECONDS must be longer than DB_STATEMENT_TIMEOUT_MS',
+    ]);
+    expect(problemsOf(() => loadWorkerConfig({ ...base, WORKER_LEASE_SECONDS: '2', DB_STATEMENT_TIMEOUT_MS: '1500' }))).toEqual([]);
+  });
+
+  it('keeps the shutdown grace of a worker inside the 30 s stop grace period of docker compose', () => {
+    expect(problemsOf(() => loadWorkerConfig({ ...base, WORKER_SHUTDOWN_GRACE_MS: '30000' }))).toEqual([
+      'WORKER_SHUTDOWN_GRACE_MS must be an integer between 0 and 25000',
+    ]);
+    expect(loadWorkerConfig({ ...base, WORKER_SHUTDOWN_GRACE_MS: '25000' }).shutdownGraceMs).toBe(25_000);
+  });
+
+  it('refuses an api that serves requests and metrics on the same port', () => {
+    const api = { ...base, ADMIN_TOKEN: 'local-admin-token' };
+    expect(problemsOf(() => loadApiConfig({ ...api, PORT: '9100' }))).toEqual(['PORT and METRICS_PORT must be different ports']);
+    expect(problemsOf(() => loadApiConfig({ ...api, PORT: '8080', METRICS_PORT: '8080' }))).toEqual(['PORT and METRICS_PORT must be different ports']);
+    expect(problemsOf(() => loadApiConfig({ ...api, PORT: '0', METRICS_PORT: '0' }))).toEqual([]);
   });
 
   it('refuses a scheduler tick or postponement that is not shorter than the misfire grace window', () => {

@@ -228,7 +228,13 @@ describe('OpenAPI document', () => {
     const tenant = await request(server).post('/tenants').set('x-admin-token', process.env.ADMIN_TOKEN as string).send({ name: 'codes' }).expect(201);
     const key = tenant.body.apiKey as string;
     const unknown = '00000000-0000-4000-8000-000000000000';
+    const existing = await request(server)
+      .post('/workflows')
+      .set('x-api-key', key)
+      .send({ name: 'codes', steps: [{ id: 'note', type: 'log', message: 'hi' }] })
+      .expect(201);
     const probes: Array<[string, string, () => request.Test]> = [
+      ['patch', '/workflows/{id}', () => request(server).patch(`/workflows/${existing.body.id}`).set('x-api-key', key).set('if-match', '"999"').send({ name: 'y' })],
       ['post', '/workflows', () => request(server).post('/workflows').set('x-api-key', key).send({ name: 'x' })],
       ['post', '/workflows', () => request(server).post('/workflows').send({})],
       ['post', '/workflows', () => request(server).post('/workflows').set('x-api-key', key).set('content-type', 'text/plain').send('{}')],
@@ -238,6 +244,7 @@ describe('OpenAPI document', () => {
       ['get', '/executions/{id}/steps/{stepIndex}/output', () => request(server).get(`/executions/${unknown}/steps/x/output`).set('x-api-key', key)],
       ['post', '/tenants', () => request(server).post('/tenants').set('x-admin-token', 'wrong').send({ name: 'codes' })],
       ['patch', '/workflows/{id}', () => request(server).patch(`/workflows/${unknown}`).set('x-api-key', key).send({ name: 'x' })],
+      ['patch', '/workflows/{id}', () => request(server).patch(`/workflows/${unknown}`).set('x-api-key', key).send({ name: 'x', enable: false })],
       ['post', '/workflows/{id}/run', () => request(server).post(`/workflows/${unknown}/run`).set('x-api-key', key).send({})],
       ['post', '/hooks/{workflowId}', () => request(server).post(`/hooks/${unknown}`).set('content-type', 'application/json').send('{}')],
     ];
@@ -246,6 +253,27 @@ describe('OpenAPI document', () => {
       const response = await send();
       const operation = document.paths[path][method] as Operation;
       if (!(String(response.status) in operation.responses)) undocumented.push(`${method.toUpperCase()} ${path} ${response.status}`);
+    }
+
+    expect(undocumented).toEqual([]);
+  });
+
+  it('documents the answers to oversized and non-JSON bodies on every operation that accepts a body', async () => {
+    const server = app.getHttpServer();
+    const unknown = '00000000-0000-4000-8000-000000000000';
+    const oversized = JSON.stringify({ name: 'x'.repeat(200 * 1024) });
+    const undocumented: string[] = [];
+    for (const [path, item] of Object.entries(document.paths).filter(([, entry]) => !entry.servers)) {
+      for (const method of ['post', 'put', 'patch'].filter((name) => name in item)) {
+        const url = path.replace(/\{[^}]+\}/g, unknown);
+        const operation = item[method] as Operation;
+        const send = () => (request(server) as unknown as Record<string, (url: string) => request.Test>)[method](url);
+        const tooLarge = await send().set('content-type', 'application/json').send(oversized);
+        const notJson = await send().set('content-type', 'text/plain').send('x');
+        for (const status of [tooLarge.status, notJson.status]) {
+          if (!(String(status) in operation.responses)) undocumented.push(`${method.toUpperCase()} ${path} ${status}`);
+        }
+      }
     }
 
     expect(undocumented).toEqual([]);
