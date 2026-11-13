@@ -237,6 +237,8 @@ flowchart TD
   with tenant, execution, job, attempt and step and sent as `X-Correlation-Id`; pino JSON logs with secrets
   redacted; metrics `flowforge_queue_depth{tenant_id,status}`, `flowforge_job_claim_latency_seconds`,
   `flowforge_step_duration_seconds`, `flowforge_job_retries_total`, `flowforge_jobs_dead_total` and more.
+  Queue depth and outbox backlog are read from the database by the API only, so worker and scheduler
+  replicas do not repeat that query; the counters come from the process that does the work.
 - **Real time:** SSE, because updates flow one way and SSE reconnects by itself and passes through the
   Next.js proxy as plain HTTP; fed by `pg_notify` triggers for executions a stream watches. Snapshots
   leave out outputs over 8 KiB (`/executions/{id}/output`), streams of one execution share one read, a
