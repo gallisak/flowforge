@@ -102,6 +102,15 @@ describe('validateWorkflow with values the API accepted before', () => {
     expect(errors).toEqual({});
     expect(changesFrom(payload!, stored)).toEqual({ enabled: false });
   });
+
+  it('lets a workflow with a step field the API no longer accepts be disabled', () => {
+    const legacy: WorkflowDto = { ...stored, name: 'Orders', steps: [{ id: 'a', type: 'log', message: 'x', retries: 3 } as WorkflowDto['steps'][number]] };
+
+    const { errors, payload } = validateWorkflow({ ...valuesFrom(legacy), enabled: false }, legacy);
+
+    expect(errors).toEqual({});
+    expect(changesFrom(payload!, legacy)).toEqual({ enabled: false });
+  });
 });
 
 describe('changesFrom', () => {

@@ -19,8 +19,8 @@ scripts/smoke.sh                        # tenant → workflow → run → succee
 ```
 
 UI http://localhost:3001, API http://localhost:3000, API reference [`docs/openapi.json`](docs/openapi.json)
-(OpenAPI 3.1). Compose runs Postgres, a one-off `migrate`, the API, 2 workers, 2 schedulers and the
-frontend, published on `127.0.0.1` only; `/metrics` and `/health/{live,ready}` listen on 9100 inside the
+(OpenAPI 3.1). Compose runs Postgres, a one-off `migrate`, the API, 2 workers, 2 schedulers, the
+frontend and an nginx edge in front of it, published on `127.0.0.1` only; `/metrics` and `/health/{live,ready}` listen on 9100 inside the
 compose network.
 
 | File | Holds |
@@ -32,7 +32,7 @@ compose network.
 - Only `migrate` gets the owner role; services connect as `flowforge_app` and refuse to start as the
   owner, a superuser or a `BYPASSRLS` role. Roles are created with the `flowforge_pgdata` volume.
 - Behind TLS set `APP_ORIGIN=https://...`: `Origin` is checked against it, the key cookie is `Secure`,
-  HSTS is sent. With proxies in front of the frontend set `TRUSTED_PROXY_HOPS`.
+  HSTS is sent. With proxies in front of the edge set `TRUSTED_PROXY_HOPS`.
 - UI login: create a tenant (below) and paste its `apiKey` at `/connect`.
 
 ### Example requests
@@ -165,7 +165,9 @@ flowchart TD
   (`TENANT_MAX_WORKFLOWS`). Failed authentication is limited per client address in memory before any
   database work (`AUTH_FAILURES_PER_MINUTE`), separately for API keys, the admin token and each
   workflow's webhooks (counted only after a wrong signature). The frontend passes the browser's address
-  with `CLIENT_ADDRESS_SECRET`, so one visitor cannot lock all users out of the UI.
+  with `CLIENT_ADDRESS_SECRET`, so one visitor cannot lock all users out of the UI. The address is the
+  one the nginx edge appends to `X-Forwarded-For`: Next.js keeps a header the client sent, so without
+  the edge any visitor could pick the address it is counted under.
 - **Why:** a missing check in code still cannot leak data; a query without tenant context sees nothing
   (`tenancy/row-level-security.int-spec.ts`).
 - **Alternatives:** schema per tenant (migrations × tenants); in-memory rate limits (grow with instances).
@@ -478,7 +480,10 @@ cursors are read in UTC; `db/database-time-zone.int-spec.ts` failed before the f
 that the `ETag` of a workflow was its step version, so two concurrent edits of the name or schedule
 overwrote each other; it is a `revision` column now (`api/workflow-concurrent-edits.int-spec.ts`). API
 responses now carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` and no `X-Powered-By`
-(`api/response-headers.int-spec.ts`).
+(`api/response-headers.int-spec.ts`). The frontend was published directly, and Next.js keeps an
+`X-Forwarded-For` sent by the client, so a visitor could send a new address with every login attempt and
+never be limited, or lock out someone else's address; the nginx edge now appends the real address
+(`scripts/smoke.sh`, run by CI, requires a forged header to be limited like any other).
 
 ## Indexes and query plans
 
@@ -588,7 +593,7 @@ limits), so the throughput difference is not the cost of the fair claim alone.
 | `queue/fair-claim.int-spec.ts` | tenant order set with an upsert | enqueue creates the tenant's queue row now |
 | `outbox/fair-delivery.int-spec.ts` | notifications point at real executions | a foreign key requires an execution of the same tenant |
 | `api-exception-filter.spec.ts`, `api/request-encoding.int-spec.ts`, `apps/frontend/test/connect-route.test.ts` | expect an `error` field | every error body has the same shape now |
-| `api/workflow-concurrent-edits.int-spec.ts`, `apps/frontend/test/workflow-edit-conflict.test.tsx`, workflow fixtures | the tag and `If-Match` follow `revision`; a rename elsewhere reloads the form | the tag covers every edit now |
+| `api/workflow-concurrent-edits.int-spec.ts`, `apps/frontend/test/workflow-edit-conflict.test.tsx`, workflow fixtures | the tag and `If-Match` follow `revision`; a rename elsewhere reloads the form; `W/"1"` is refused | the tag covers every edit now; `If-Match` uses strong comparison (RFC 9110) |
 
 The other starter tests are unchanged and green.
 
@@ -603,7 +608,9 @@ The other starter tests are unchanged and green.
 - Version garbage collection reads the version and workflow tables in full on each retention run.
 - Applied migrations are not rewritten: older ones build indexes without `CONCURRENTLY` and lock large
   tables for a backfill; new ones build concurrently and add foreign keys `NOT VALID` first. The
-  `timestamptz` migration does not rewrite tables but rebuilds the indexes on those columns under a lock.
+  `timestamptz` migration rebuilds the indexes on those columns under a lock and, unless the database
+  time zone is UTC, also rewrites the tables; old values are read in the database time zone they were
+  written in.
 - Not measured: the effect of watched notifications on commit throughput; outbox in-flight limits can be
   exceeded by one per dispatcher claiming at the same moment.
 - The runtime image contains `typescript` and `ts-node` (TypeORM peer dependencies); `typeorm` 0.3 pulls

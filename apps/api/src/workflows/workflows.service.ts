@@ -34,10 +34,6 @@ function canonicalJson(value: unknown): string {
   );
 }
 
-function editableStateOf(wf: Workflow): string {
-  return canonicalJson([wf.name, wf.steps, wf.cron, wf.timezone, wf.enabled, wf.missedRunPolicy]);
-}
-
 function firstRunAt(cron: string | null, timezone: string, enabled: boolean): Date | null {
   return enabled && cron !== null ? nextOccurrence({ cron, timezone }, new Date()) : null;
 }
@@ -107,27 +103,28 @@ export class WorkflowsService {
     return this.db.run(tenantId, async (em) => {
       const wf = await this.findOwned(em, tenantId, id, true);
       if (ifMatch !== undefined && !matchesPrecondition(ifMatch, wf.revision)) throw new PreconditionFailedException(WORKFLOW_CHANGED);
-      const editableBefore = editableStateOf(wf);
       if (input.cron !== undefined || input.timezone !== undefined) {
         validateSchedule(input.cron === undefined ? wf.cron : input.cron, input.timezone ?? wf.timezone);
       }
+      const nameChanged = input.name !== undefined && input.name !== wf.name;
       if (input.name !== undefined) wf.name = input.name;
-      const steps = input.steps === undefined ? undefined : validateSteps(input.steps);
-      const stepsChanged = steps !== undefined && canonicalJson(steps) !== canonicalJson(wf.steps);
-      if (steps !== undefined && stepsChanged) {
-        wf.steps = steps;
+      const stepsChanged = input.steps !== undefined && canonicalJson(input.steps) !== canonicalJson(wf.steps);
+      if (stepsChanged) {
+        wf.steps = validateSteps(input.steps);
         wf.version += 1;
       }
       const scheduleBefore = [wf.cron, wf.timezone, wf.enabled].join('|');
       if (input.cron !== undefined) wf.cron = input.cron;
       if (input.timezone !== undefined) wf.timezone = input.timezone;
       if (input.enabled !== undefined) wf.enabled = input.enabled;
+      const policyChanged = input.missedRunPolicy !== undefined && input.missedRunPolicy !== wf.missedRunPolicy;
       if (input.missedRunPolicy !== undefined) wf.missedRunPolicy = input.missedRunPolicy;
-      if ([wf.cron, wf.timezone, wf.enabled].join('|') !== scheduleBefore) {
+      const scheduleChanged = [wf.cron, wf.timezone, wf.enabled].join('|') !== scheduleBefore;
+      if (scheduleChanged) {
         wf.nextRunAt = firstRunAt(wf.cron, wf.timezone, wf.enabled);
         wf.scheduleRetryAt = null;
       }
-      if (editableStateOf(wf) !== editableBefore) wf.revision += 1;
+      if (nameChanged || stepsChanged || scheduleChanged || policyChanged) wf.revision += 1;
       const saved = await em.save(wf);
       delete saved.scheduleRetryAt;
       if (stepsChanged) await this.recordVersion(em, saved);

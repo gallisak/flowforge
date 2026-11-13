@@ -70,13 +70,24 @@ describe('concurrent workflow edits', () => {
     expect(res.headers.etag).toBe('"1"');
   });
 
-  it.each(['W/"1"', '*', '"7", "1"'])('accepts the matching precondition %s', async (ifMatch) => {
+  it('accepts unchanged steps with a field the API no longer accepts when other fields change', async () => {
+    const id = await createWorkflow();
+    const legacy = [{ id: 'note', type: 'log', message: 'v1', retries: 3 }];
+    await ctx.ds.query(`UPDATE workflows SET steps = $2::jsonb WHERE id = $1`, [id, JSON.stringify(legacy)]);
+
+    const res = await api().patch(`/workflows/${id}`).set('x-api-key', tenant.apiKey).send({ steps: legacy, enabled: false }).expect(200);
+
+    expect(res.body).toMatchObject({ enabled: false, version: 1, steps: legacy });
+    await api().patch(`/workflows/${id}`).set('x-api-key', tenant.apiKey).send({ steps: [{ id: 'note', type: 'log', message: 'v2', retries: 3 }] }).expect(400);
+  });
+
+  it.each(['*', '"7", "1"'])('accepts the matching precondition %s', async (ifMatch) => {
     const id = await createWorkflow();
 
     await api().patch(`/workflows/${id}`).set('x-api-key', tenant.apiKey).set('if-match', ifMatch).send({ name: 'renamed' }).expect(200);
   });
 
-  it.each(['"2"', 'W/"0"', '1', 'garbage'])('refuses the precondition %s that does not match', async (ifMatch) => {
+  it.each(['"2"', 'W/"1"', 'W/"0"', '1', 'garbage'])('refuses the precondition %s that does not match', async (ifMatch) => {
     const id = await createWorkflow();
 
     const res = await api().patch(`/workflows/${id}`).set('x-api-key', tenant.apiKey).set('if-match', ifMatch).send({ name: 'renamed' }).expect(412);

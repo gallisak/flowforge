@@ -208,6 +208,20 @@ describe('execution notifications', () => {
     expect(listed.body.every((event: Record<string, unknown>) => !('payload' in event) && event.status === 'dead')).toBe(true);
   });
 
+  it('tells the tenant that the endpoint redirects instead of reporting a connection error', async () => {
+    receiver.setHandler((_req, res) => {
+      res.writeHead(302, { location: 'https://example.com/elsewhere' }).end();
+    });
+
+    const execution = await execute(tenant, [{ id: 'note', type: 'log', message: 'hi' }]);
+
+    await eventually(async () =>
+      expect(await ctx.ds.getRepository(OutboxEvent).findOneByOrFail({ executionId: execution.id })).toMatchObject({
+        lastError: 'endpoint answered with a redirect; notifications do not follow redirects',
+      }),
+    );
+  });
+
   it('records a broken connection without the text of the network error', async () => {
     receiver.setHandler((_req, res) => {
       res.socket?.destroy();

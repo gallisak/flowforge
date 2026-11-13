@@ -116,7 +116,8 @@ export function validateWorkflow(values: WorkflowFormValues, original?: Workflow
   } catch (e) {
     errors.steps = `Steps are not valid JSON: ${(e as Error).message}`;
   }
-  if (!errors.steps) {
+  const stepsUnchanged = original !== undefined && JSON.stringify(steps) === JSON.stringify(original.steps);
+  if (!errors.steps && !stepsUnchanged) {
     if (!Array.isArray(steps) || steps.length === 0) errors.steps = 'Steps must be a non-empty JSON array';
     else {
       const seen = new Set<string>();

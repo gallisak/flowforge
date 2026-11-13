@@ -52,6 +52,21 @@ describe('execution events route', () => {
     expect(res.status).toBe(404);
   });
 
+  it('passes the wait the API asks for when it refuses another stream', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('{"statusCode":429,"message":"Too many open execution streams"}', {
+        status: 429,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'retry-after': '10' },
+      }),
+    );
+
+    const res = await GET(make(), context);
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('retry-after')).toBe('10');
+    expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
+  });
+
   it('answers 504 when the API sends no headers before the deadline', async () => {
     vi.useFakeTimers();
     fetchMock.mockImplementationOnce(

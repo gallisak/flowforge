@@ -39,4 +39,16 @@ done
 curl -fsS "$WEB/api/health" >/dev/null || fail "the frontend health check did not answer"
 curl -fsS -o /dev/null "$WEB/connect" || fail "the frontend did not serve the connect page"
 
-echo "smoke test passed: execution $EXECUTION_ID succeeded"
+api_setting() {
+  grep "^$1=" "$ROOT/apps/api/.env" 2>/dev/null | tail -n 1 | cut -d= -f2- || true
+}
+FAILURES_PER_MINUTE="$(api_setting AUTH_FAILURES_PER_MINUTE)"
+LIMITED=""
+for attempt in $(seq 1 $(( ${FAILURES_PER_MINUTE:-60} + 1 ))); do
+  CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$WEB/api/connect" -H "origin: $WEB" -H 'content-type: application/json' \
+    -H "x-forwarded-for: 198.51.100.$(( attempt % 250 + 1 ))" -d '{"apiKey":"ff_smoke_wrong_key"}')"
+  [[ "$CODE" == "429" ]] && LIMITED=1 && break
+done
+[[ -n "$LIMITED" ]] || fail "failed logins with a forged X-Forwarded-For were never limited"
+
+echo "smoke test passed: execution $EXECUTION_ID succeeded, forged client addresses are limited"

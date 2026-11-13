@@ -45,10 +45,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   if (!upstream.ok || !upstream.body) {
-    return new NextResponse(await upstream.text().catch(() => ''), {
-      status: upstream.status,
-      headers: { 'content-type': 'application/json' },
-    });
+    const headers: Record<string, string> = { 'content-type': upstream.headers.get('content-type') ?? 'application/json' };
+    const retryAfter = upstream.headers.get('retry-after');
+    if (retryAfter) headers['retry-after'] = retryAfter;
+    return new NextResponse(await upstream.text().catch(() => ''), { status: upstream.status, headers });
   }
   return new Response(upstream.body, {
     headers: {

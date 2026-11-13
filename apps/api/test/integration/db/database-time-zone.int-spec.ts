@@ -1,5 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { DataSource } from 'typeorm';
+import { dataSourceOptions } from '../../../src/db/data-source';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
 import { seedTenant, SeededTenant } from '../../support/db';
@@ -75,5 +77,20 @@ describe('timestamps when the database session time zone is not UTC', () => {
     } while (cursor);
 
     expect(seen).toEqual([...created].reverse());
+  });
+  it('keeps the instants of rows written before the migration to time zone aware columns', async () => {
+    const owner = await new DataSource(dataSourceOptions(ctx.db.ownerUrl)).initialize();
+    try {
+      const latest = async () => (await owner.query(`SELECT name FROM migrations ORDER BY id DESC LIMIT 1`))[0].name;
+      while ((await latest()) !== 'IdleTenantClaims1794322400000') await owner.undoLastMigration({ transaction: 'each' });
+      const [{ id }]: Array<{ id: string }> = await owner.query(`INSERT INTO tenants (name, "apiKeyHash") VALUES ('before', 'x') RETURNING id`);
+
+      await owner.runMigrations({ transaction: 'each' });
+
+      const [{ createdAt }]: Array<{ createdAt: Date }> = await owner.query(`SELECT "createdAt" FROM tenants WHERE id = $1`, [id]);
+      expect(Math.abs(createdAt.getTime() - Date.now())).toBeLessThan(CLOCK_TOLERANCE_MS);
+    } finally {
+      await owner.destroy();
+    }
   });
 });

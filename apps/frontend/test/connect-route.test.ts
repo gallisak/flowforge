@@ -31,6 +31,13 @@ describe('connect route', () => {
     expect(cookie.toLowerCase()).not.toContain('secure');
   });
 
+  it('accepts a key pasted with surrounding blanks that make it longer than the limit', async () => {
+    const res = await POST(make('POST', { apiKey: `\n${' '.repeat(150)}ff_valid${' '.repeat(150)}\n` }));
+
+    expect(res.status).toBe(200);
+    expect(fetchMock.mock.calls[0][1].headers['x-api-key']).toBe('ff_valid');
+  });
+
   it('marks the cookie secure when the site is served over https', async () => {
     const req = make('POST', { apiKey: 'ff_valid' });
     req.headers.set('x-forwarded-proto', 'https');

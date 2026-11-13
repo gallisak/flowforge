@@ -5,7 +5,7 @@ import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity
 import { WORKER_CONFIG, WorkerConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
 import { retryDelayMs } from '../engine/job-queue.service';
-import { findDestinationError, SafeHttpClient, SafeHttpResponse } from '../engine/http/safe-http';
+import { findDestinationError, InvalidRequestUrlError, SafeHttpClient, SafeHttpResponse, TooManyRedirectsError } from '../engine/http/safe-http';
 import { NotificationEndpoint, OutboxEvent, WebhookSecret } from '../entities';
 import { CORRELATION_HEADER } from '../observability/correlation';
 import { runWithLogContext } from '../observability/log-context';
@@ -153,6 +153,8 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
     } catch (error) {
       const blocked = findDestinationError(error);
       if (blocked) return { kind: 'dead', error: blocked.message };
+      if (error instanceof InvalidRequestUrlError) return { kind: 'dead', error: error.message };
+      if (error instanceof TooManyRedirectsError) return { kind: 'retry', error: 'endpoint answered with a redirect; notifications do not follow redirects' };
       const name = (error as Error).name;
       const timedOut = name === 'TimeoutError' || name === 'HeadersTimeoutError' || name === 'BodyTimeoutError';
       return { kind: 'retry', error: timedOut ? 'delivery timed out' : 'delivery failed: connection error' };

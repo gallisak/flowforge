@@ -24,13 +24,14 @@ export async function POST(req: NextRequest) {
     return problem(400, 'Request body must be a small JSON object');
   }
   if (typeof apiKey !== 'string' || apiKey.trim().length === 0) return problem(400, 'API key is required');
-  if (apiKey.length > MAX_KEY_LENGTH) return problem(400, 'API key is too long');
-  if (!PRINTABLE_ASCII.test(apiKey.trim())) return problem(400, 'API key contains characters that are not allowed');
+  const key = apiKey.trim();
+  if (key.length > MAX_KEY_LENGTH) return problem(400, 'API key is too long');
+  if (!PRINTABLE_ASCII.test(key)) return problem(400, 'API key contains characters that are not allowed');
 
   let check: Response;
   try {
     check = await fetch(`${API_URL}/workflows`, {
-      headers: { 'x-api-key': apiKey.trim(), ...clientAddressHeaders(req.headers) },
+      headers: { 'x-api-key': key, ...clientAddressHeaders(req.headers) },
       cache: 'no-store',
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
   if (!check.ok) return problem(502, `The API answered ${check.status}`);
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(API_KEY_COOKIE, apiKey.trim(), {
+  res.cookies.set(API_KEY_COOKIE, key, {
     httpOnly: true,
     sameSite: 'lax',
     secure: servedOverHttps(req),
