@@ -30,6 +30,7 @@ function isStorableText(text: string): boolean {
 }
 
 export function rejectUnstorableJson(key: string, value: unknown): unknown {
+  if (key === '__proto__') throw new SyntaxError('JSON objects must not have a "__proto__" key');
   if (!isStorableText(key) || (typeof value === 'string' && !isStorableText(value))) {
     throw new SyntaxError('JSON strings must not contain the NUL character or unpaired UTF-16 surrogates');
   }

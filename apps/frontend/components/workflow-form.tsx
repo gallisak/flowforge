@@ -66,7 +66,7 @@ export function WorkflowForm({ workflow, timezones }: { workflow?: WorkflowDto; 
       if (workflow) {
         const changes = changesFrom(payload, workflow);
         if (Object.keys(changes).length > 0) {
-          await apiRequest(`/workflows/${workflow.id}`, { method: 'PATCH', body: changes, headers: { 'if-match': `"${workflow.version}"` } });
+          await apiRequest(`/workflows/${workflow.id}`, { method: 'PATCH', body: changes, headers: { 'if-match': `"${workflow.revision}"` } });
         }
       } else {
         await apiRequest('/workflows', { method: 'POST', body: payload });

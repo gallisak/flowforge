@@ -155,7 +155,7 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
       if (blocked) return { kind: 'dead', error: blocked.message };
       const name = (error as Error).name;
       const timedOut = name === 'TimeoutError' || name === 'HeadersTimeoutError' || name === 'BodyTimeoutError';
-      return { kind: 'retry', error: timedOut ? 'delivery timed out' : `delivery failed: ${(error as Error).message}` };
+      return { kind: 'retry', error: timedOut ? 'delivery timed out' : 'delivery failed: connection error' };
     }
     if (response.status >= 200 && response.status <= 299) return { kind: 'delivered', status: response.status };
     return { kind: 'retry', error: `endpoint answered ${response.status}`, status: response.status };

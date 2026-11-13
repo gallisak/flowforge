@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, unreachable } from '@/lib/api';
 import { clientAddressHeaders } from '@/lib/client-address';
+import { problemBody } from '@/lib/problem';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -8,7 +9,7 @@ export const runtime = 'nodejs';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function problem(status: number, message: string) {
-  return NextResponse.json({ statusCode: status, message }, { status });
+  return NextResponse.json(problemBody(status, message), { status });
 }
 
 function timeoutError(): Error {

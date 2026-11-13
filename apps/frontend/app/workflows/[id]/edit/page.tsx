@@ -15,7 +15,7 @@ export default async function EditWorkflowPage({ params }: { params: Promise<{ i
   if (!UUID.test(id)) notFound();
   try {
     const workflow = await apiFetch<WorkflowDto>(`/workflows/${id}`);
-    return <WorkflowForm key={workflow.version} workflow={workflow} timezones={supportedTimezones()} />;
+    return <WorkflowForm key={workflow.revision} workflow={workflow} timezones={supportedTimezones()} />;
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) notFound();
     const failure = e instanceof ApiError ? e : new ApiError(0, ['The API is not reachable']);

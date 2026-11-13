@@ -48,7 +48,7 @@ export class Execution {
   @Column({ type: 'varchar', length: 128, nullable: true })
   correlationId: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
   @Column({ type: 'timestamptz', nullable: true })

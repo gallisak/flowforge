@@ -22,6 +22,6 @@ export class Tenant {
   @Column({ type: 'int', nullable: true })
   rateLimitPerMinute: number | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }

@@ -49,7 +49,7 @@ describe('ApiExceptionFilter', () => {
   it('keeps the status of a client error raised before routing, such as a body parser error', () => {
     const parseError = Object.assign(new Error('Unexpected end of JSON input'), { status: 400, expose: true });
 
-    expect(respond(parseError)).toEqual({ statusCode: 400, body: { statusCode: 400, message: 'Unexpected end of JSON input' }, headers: {} });
+    expect(respond(parseError)).toEqual({ statusCode: 400, body: { statusCode: 400, message: 'Unexpected end of JSON input', error: 'Bad Request' }, headers: {} });
   });
 
   it('hides the details of an unexpected error and logs them instead', () => {
@@ -57,7 +57,7 @@ describe('ApiExceptionFilter', () => {
 
     const response = respond(failure);
 
-    expect(response).toEqual({ statusCode: 500, body: { statusCode: 500, message: 'Internal server error' }, headers: {} });
+    expect(response).toEqual({ statusCode: 500, body: { statusCode: 500, message: 'Internal server error', error: 'Internal Server Error' }, headers: {} });
     expect(logged).toHaveBeenCalledWith(expect.stringContaining('relation "secrets" does not exist'), expect.any(String));
   });
 

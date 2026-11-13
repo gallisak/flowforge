@@ -12,7 +12,7 @@ import { CreateWorkflowDto, UpdateWorkflowDto } from './workflow.dto';
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
-const SUMMARY_COLUMNS = ['id', 'tenantId', 'name', 'enabled', 'cron', 'timezone', 'missedRunPolicy', 'nextRunAt', 'version', 'createdAt'] as const;
+const SUMMARY_COLUMNS = ['id', 'tenantId', 'name', 'enabled', 'cron', 'timezone', 'missedRunPolicy', 'nextRunAt', 'version', 'revision', 'createdAt'] as const;
 
 export type WorkflowSummary = Pick<Workflow, (typeof SUMMARY_COLUMNS)[number]>;
 
@@ -34,6 +34,10 @@ function canonicalJson(value: unknown): string {
   );
 }
 
+function editableStateOf(wf: Workflow): string {
+  return canonicalJson([wf.name, wf.steps, wf.cron, wf.timezone, wf.enabled, wf.missedRunPolicy]);
+}
+
 function firstRunAt(cron: string | null, timezone: string, enabled: boolean): Date | null {
   return enabled && cron !== null ? nextOccurrence({ cron, timezone }, new Date()) : null;
 }
@@ -52,13 +56,13 @@ export class WorkflowsService {
       const query = em
         .createQueryBuilder(Workflow, 'w')
         .select(SUMMARY_COLUMNS.map((column) => `w.${column}`))
-        .addSelect('w."createdAt"::text', 'cursor_created_at')
+        .addSelect(`(w."createdAt" AT TIME ZONE 'UTC')::text`, 'cursor_created_at')
         .where('w."tenantId" = :tenantId', { tenantId })
         .orderBy('w."createdAt"', 'DESC')
         .addOrderBy('w."id"', 'DESC')
         .limit(limit + 1);
       if (after) {
-        query.andWhere('(w."createdAt", w."id") < (CAST(:afterCreatedAt AS timestamp), CAST(:afterId AS uuid))', {
+        query.andWhere(`(w."createdAt", w."id") < (CAST(:afterCreatedAt AS timestamp) AT TIME ZONE 'UTC', CAST(:afterId AS uuid))`, {
           afterCreatedAt: after.createdAt,
           afterId: after.id,
         });
@@ -102,7 +106,8 @@ export class WorkflowsService {
   update(tenantId: string, id: string, input: UpdateWorkflowDto, ifMatch?: string): Promise<Workflow> {
     return this.db.run(tenantId, async (em) => {
       const wf = await this.findOwned(em, tenantId, id, true);
-      if (ifMatch !== undefined && !matchesPrecondition(ifMatch, wf.version)) throw new PreconditionFailedException(WORKFLOW_CHANGED);
+      if (ifMatch !== undefined && !matchesPrecondition(ifMatch, wf.revision)) throw new PreconditionFailedException(WORKFLOW_CHANGED);
+      const editableBefore = editableStateOf(wf);
       if (input.cron !== undefined || input.timezone !== undefined) {
         validateSchedule(input.cron === undefined ? wf.cron : input.cron, input.timezone ?? wf.timezone);
       }
@@ -122,6 +127,7 @@ export class WorkflowsService {
         wf.nextRunAt = firstRunAt(wf.cron, wf.timezone, wf.enabled);
         wf.scheduleRetryAt = null;
       }
+      if (editableStateOf(wf) !== editableBefore) wf.revision += 1;
       const saved = await em.save(wf);
       delete saved.scheduleRetryAt;
       if (stepsChanged) await this.recordVersion(em, saved);

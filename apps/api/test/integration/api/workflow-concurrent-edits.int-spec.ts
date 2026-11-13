@@ -27,7 +27,7 @@ describe('concurrent workflow edits', () => {
     await app?.close();
   });
 
-  it('tags a workflow with its version', async () => {
+  it('tags a workflow with its revision', async () => {
     const id = await createWorkflow();
 
     const res = await api().get(`/workflows/${id}`).set('x-api-key', tenant.apiKey).expect(200);
@@ -47,6 +47,27 @@ describe('concurrent workflow edits', () => {
     expect(second.body.message).toBe(CONFLICT_MESSAGE);
     const current = await api().get(`/workflows/${id}`).set('x-api-key', tenant.apiKey).expect(200);
     expect(current.body.steps).toEqual(steps('first'));
+  });
+
+  it('refuses the second of two renames made from the same tag, although the steps did not change', async () => {
+    const id = await createWorkflow();
+    const etag = (await api().get(`/workflows/${id}`).set('x-api-key', tenant.apiKey).expect(200)).headers.etag;
+
+    const first = await api().patch(`/workflows/${id}`).set('x-api-key', tenant.apiKey).set('if-match', etag).send({ name: 'first' }).expect(200);
+    expect(first.headers.etag).toBe('"2"');
+    expect(first.body).toMatchObject({ version: 1, revision: 2 });
+    await api().patch(`/workflows/${id}`).set('x-api-key', tenant.apiKey).set('if-match', etag).send({ cron: '0 9 * * *' }).expect(412);
+
+    const current = await api().get(`/workflows/${id}`).set('x-api-key', tenant.apiKey).expect(200);
+    expect(current.body).toMatchObject({ name: 'first', cron: null });
+  });
+
+  it('keeps the tag when a change sets the values the workflow already has', async () => {
+    const id = await createWorkflow();
+
+    const res = await api().patch(`/workflows/${id}`).set('x-api-key', tenant.apiKey).set('if-match', '"1"').send({ name: 'edited' }).expect(200);
+
+    expect(res.headers.etag).toBe('"1"');
   });
 
   it.each(['W/"1"', '*', '"7", "1"'])('accepts the matching precondition %s', async (ifMatch) => {

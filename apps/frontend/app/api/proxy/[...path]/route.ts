@@ -4,6 +4,7 @@ import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, unreachable } from '@/lib/api'
 import { clientAddressHeaders } from '@/lib/client-address';
 import { BodyTooLargeError, MAX_PROXY_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES, readLimitedText } from '@/lib/request-body';
 import { isSameOrigin } from '@/lib/same-origin';
+import { problemBody } from '@/lib/problem';
 
 export const dynamic = 'force-dynamic';
 
@@ -46,7 +47,7 @@ function declaredLength(res: Response): number | undefined {
 }
 
 function problem(status: number, message: string) {
-  return NextResponse.json({ statusCode: status, message }, { status, headers: { 'cache-control': 'private, no-store', vary: 'Cookie' } });
+  return NextResponse.json(problemBody(status, message), { status, headers: { 'cache-control': 'private, no-store', vary: 'Cookie' } });
 }
 
 async function forward(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {

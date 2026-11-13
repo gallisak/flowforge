@@ -30,4 +30,11 @@ describe('validateSteps', () => {
   it('rejects a negative delay', () => {
     expect(() => validateSteps([{ id: 'a', type: 'delay', ms: -1 }])).toThrow(BadRequestException);
   });
+  it.each([
+    [{ id: 'a', type: 'http', url: 'https://example.com', header: { accept: 'text/plain' } }, 'steps[0].header is not a field of http steps'],
+    [{ id: 'a', type: 'log', message: 'x', expr: '1' }, 'steps[0].expr is not a field of log steps'],
+    [{ id: 'a', type: 'delay', ms: 5, seconds: 5 }, 'steps[0].seconds is not a field of delay steps'],
+  ])('rejects a field the step type does not have: %o', (step, message) => {
+    expect(() => validateSteps([step])).toThrow(message);
+  });
 });

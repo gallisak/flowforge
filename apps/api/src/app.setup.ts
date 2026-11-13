@@ -4,6 +4,7 @@ import { IncomingMessage, ServerResponse } from 'http';
 import { jsonTextExceedsDepth, MAX_JSON_DEPTH } from './common/json-depth';
 import { rejectUnstorableJson } from './common/storable';
 import { ApiExceptionFilter } from './common/api-exception.filter';
+import { SingleQueryValuesPipe } from './common/single-query-values.pipe';
 import { assignRequestId, enterRequestContext } from './observability/correlation';
 
 export type RawBodyRequest = IncomingMessage & { rawBody?: Buffer };
@@ -31,17 +32,25 @@ export function isJsonInUtf8(contentType: string | undefined): boolean {
   });
 }
 
+function protectResponses(_req: IncomingMessage, res: ServerResponse, next: () => void): void {
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('cache-control', 'no-store');
+  next();
+}
+
 function acceptOnlyJsonBodies(req: IncomingMessage, res: ServerResponse, next: () => void): void {
   if (!hasBody(req) || isJsonInUtf8(req.headers['content-type'])) return next();
-  res.writeHead(415, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify({ statusCode: 415, message: UNSUPPORTED_BODY }));
+  res.writeHead(415, { 'content-type': 'application/json; charset=utf-8' }).end(JSON.stringify({ statusCode: 415, message: UNSUPPORTED_BODY, error: 'Unsupported Media Type' }));
 }
 
 export function configureApp(app: INestApplication): INestApplication {
+  (app as NestExpressApplication).disable('x-powered-by');
   app.use(assignRequestId);
+  app.use(protectResponses);
   app.use(acceptOnlyJsonBodies);
   (app as NestExpressApplication).useBodyParser('json', { inflate: false, reviver: rejectUnstorableJson, verify: keepRawBodyAndRejectDeepJson });
   app.use(enterRequestContext);
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+  app.useGlobalPipes(new SingleQueryValuesPipe(), new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new ApiExceptionFilter());
   return app;
 }

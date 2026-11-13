@@ -52,6 +52,7 @@ export interface WorkflowSummaryDto {
   missedRunPolicy: MissedRunPolicy;
   nextRunAt: string | null;
   version: number;
+  revision: number;
   createdAt: string;
 }
 
@@ -65,6 +66,7 @@ export interface WorkflowDto {
   missedRunPolicy: MissedRunPolicy;
   nextRunAt: string | null;
   version: number;
+  revision: number;
   createdAt: string;
 }
 

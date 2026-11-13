@@ -156,7 +156,10 @@ flowchart TD
   Every tenant table has row level security on `app.tenant_id`, set per transaction by `TenantDb.run`;
   services also filter by `tenantId`; foreign keys `(tenantId, executionId)` stop a row of one tenant from
   pointing at another tenant's execution. Cross-tenant work (key lookup, webhook routing, claims, reaper,
-  retention, metrics) goes through narrow `SECURITY DEFINER` functions.
+  retention, metrics) goes through narrow `SECURITY DEFINER` functions. Row level security is not
+  `FORCE`d on purpose: only the owner bypasses it, and the owner is used by migrations and those
+  functions; tables without policies (`tenant_queue_state`, `rate_limit_windows`, `execution_watches`)
+  are not granted to `flowforge_app` at all.
 - **Limits per tenant** (`PATCH /tenants/:id/limits`): running jobs (exact, in `claim_job`), queued jobs
   (`429` + `Retry-After`), requests per minute (window in Postgres, `X-RateLimit-*`), workflows
   (`TENANT_MAX_WORKFLOWS`). Failed authentication is limited per client address in memory before any
@@ -240,7 +243,8 @@ flowchart TD
   slow client gets only the latest snapshot.
 - **Frontend:** the page closes its stream on unmount and on a final status, reconnects with backoff and
   shows the last snapshot if the stream is refused; executions list with cursor pages and a status filter;
-  workflow form with the API rules and `If-Match` (`412` on a stale form); loading, empty and error
+  workflow form with the API rules and `If-Match` on the workflow's `revision`, which grows with any edit
+  (`412` on a stale form; `version` counts step versions only); loading, empty and error
   states; CSP with a nonce per response; proxy answers streamed, `no-store`, up to 32 MiB.
 - **Retention:** workers delete data finished more than `RETENTION_DAYS` (30) ago and unused versions.
 
@@ -464,6 +468,16 @@ Defects in the new code, found by four code reviews, are fixed in the commits `f
 in the final / second / third / fourth code review`, each with tests that failed before it. Fencing of
 every worker write is proven by `scripts/mutation/fencing.sh` (2/2 killed).
 
+One more starter defect came up in the last review: `createdAt` of tenants, workflows, executions, jobs and
+`startedAt` of steps were `timestamp` without a time zone (`@CreateDateColumn()`, e.g.
+`src/entities/execution.entity.ts:32`). With a database time zone other than UTC, the API reported these
+times shifted by the offset, so durations in the UI were wrong by hours. They are `timestamptz` now and
+cursors are read in UTC; `db/database-time-zone.int-spec.ts` failed before the fix (12 h off). The same review found
+that the `ETag` of a workflow was its step version, so two concurrent edits of the name or schedule
+overwrote each other; it is a `revision` column now (`api/workflow-concurrent-edits.int-spec.ts`). API
+responses now carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff` and no `X-Powered-By`
+(`api/response-headers.int-spec.ts`).
+
 ## Indexes and query plans
 
 | Query | Index |
@@ -571,6 +585,8 @@ limits), so the throughput difference is not the cost of the fair claim alone.
 | `apps/frontend/test/security-headers.test.ts` | typed config; CSP read from the middleware | tests are type checked; the CSP needs a nonce per response |
 | `queue/fair-claim.int-spec.ts` | tenant order set with an upsert | enqueue creates the tenant's queue row now |
 | `outbox/fair-delivery.int-spec.ts` | notifications point at real executions | a foreign key requires an execution of the same tenant |
+| `api-exception-filter.spec.ts`, `api/request-encoding.int-spec.ts`, `apps/frontend/test/connect-route.test.ts` | expect an `error` field | every error body has the same shape now |
+| `api/workflow-concurrent-edits.int-spec.ts`, `apps/frontend/test/workflow-edit-conflict.test.tsx`, workflow fixtures | the tag and `If-Match` follow `revision`; a rename elsewhere reloads the form | the tag covers every edit now |
 
 The other starter tests are unchanged and green.
 
@@ -584,9 +600,8 @@ The other starter tests are unchanged and green.
 - The workflow quota is one setting for all tenants, not part of `PATCH /tenants/:id/limits`.
 - Version garbage collection reads the version and workflow tables in full on each retention run.
 - Applied migrations are not rewritten: older ones build indexes without `CONCURRENTLY` and lock large
-  tables for a backfill; new ones build concurrently and add foreign keys `NOT VALID` first.
-- A workflow's `ETag` is its version, which covers the steps only; concurrent edits of only the name or
-  schedule are not detected.
+  tables for a backfill; new ones build concurrently and add foreign keys `NOT VALID` first. The
+  `timestamptz` migration does not rewrite tables but rebuilds the indexes on those columns under a lock.
 - Not measured: the effect of watched notifications on commit throughput; outbox in-flight limits can be
   exceeded by one per dispatcher claiming at the same moment.
 - The runtime image contains `typescript` and `ts-node` (TypeORM peer dependencies); `typeorm` 0.3 pulls

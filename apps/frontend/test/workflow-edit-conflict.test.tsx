@@ -21,7 +21,8 @@ const workflow: WorkflowDto = {
   timezone: 'UTC',
   missedRunPolicy: 'once',
   nextRunAt: null,
-  version: 7,
+  version: 3,
+  revision: 7,
   createdAt: '2026-11-20T09:00:00Z',
 };
 
@@ -31,7 +32,7 @@ describe('editing a workflow that someone else may change at the same time', () 
   beforeEach(() => {
     router.push.mockReset();
     router.refresh.mockReset();
-    fetchMock = vi.fn(async () => json({ ...workflow, version: 8 }));
+    fetchMock = vi.fn(async () => json({ ...workflow, revision: 8 }));
     vi.stubGlobal('fetch', fetchMock);
   });
 
@@ -41,7 +42,7 @@ describe('editing a workflow that someone else may change at the same time', () 
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   }
 
-  it('sends the version it was loaded with as the expected version', async () => {
+  it('sends the revision it was loaded with as the expected entity tag', async () => {
     rename();
 
     await waitFor(() => expect(router.push).toHaveBeenCalledWith('/workflows'));
@@ -73,13 +74,13 @@ describe('editing a workflow that someone else may change at the same time', () 
     expect(await screen.findByRole('alert')).toHaveTextContent(CONFLICT);
   });
 
-  it('shows the newer workflow after a reload instead of the stale edits under the newer version', async () => {
+  it('shows the workflow renamed elsewhere after a reload instead of the stale edits', async () => {
     const id = '48c61687-afc1-474c-85ae-678f21b706d2';
     loadWorkflow.mockResolvedValueOnce({ ...workflow, id });
     const view = render(await EditWorkflowPage({ params: Promise.resolve({ id }) }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Orders v2' } });
 
-    loadWorkflow.mockResolvedValueOnce({ ...workflow, id, name: 'Orders renamed elsewhere', version: 8 });
+    loadWorkflow.mockResolvedValueOnce({ ...workflow, id, name: 'Orders renamed elsewhere', revision: 8 });
     view.rerender(await EditWorkflowPage({ params: Promise.resolve({ id }) }));
 
     expect(screen.getByLabelText('Name')).toHaveValue('Orders renamed elsewhere');

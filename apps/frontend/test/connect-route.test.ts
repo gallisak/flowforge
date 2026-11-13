@@ -46,7 +46,7 @@ describe('connect route', () => {
     const res = await POST(make('POST', { apiKey: 'ff_wrong' }));
 
     expect(res.status).toBe(400);
-    expect((await res.json()).message).toBe('This API key is not valid');
+    expect(await res.json()).toEqual({ statusCode: 400, message: 'This API key is not valid', error: 'Bad Request' });
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 

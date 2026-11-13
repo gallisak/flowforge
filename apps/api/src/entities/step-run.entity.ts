@@ -46,7 +46,7 @@ export class StepRun {
   @Column({ type: 'text', nullable: true })
   error: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   startedAt: Date;
 
   @Column({ type: 'timestamptz', nullable: true })

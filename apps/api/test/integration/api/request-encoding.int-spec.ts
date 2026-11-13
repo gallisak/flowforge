@@ -42,7 +42,7 @@ describe('request body encodings', () => {
     const response = await post('/workflows', 'text/plain', JSON.stringify({ name: 'plain', steps: STEPS }));
 
     expect(response.status).toBe(415);
-    expect(response.body).toEqual({ statusCode: 415, message: 'Request body must be application/json in UTF-8' });
+    expect(response.body).toEqual({ statusCode: 415, message: 'Request body must be application/json in UTF-8', error: 'Unsupported Media Type' });
   });
 
   it('accepts JSON with an explicit UTF-8 charset', async () => {

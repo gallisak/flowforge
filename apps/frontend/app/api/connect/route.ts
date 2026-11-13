@@ -3,6 +3,7 @@ import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, unreachable } from '@/lib/api'
 import { clientAddressHeaders } from '@/lib/client-address';
 import { MAX_CONNECT_BODY_BYTES, readLimitedText } from '@/lib/request-body';
 import { isSameOrigin, servedOverHttps } from '@/lib/same-origin';
+import { problemBody } from '@/lib/problem';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,7 +12,7 @@ const PRINTABLE_ASCII = /^[\x21-\x7E]+$/;
 const COOKIE_MAX_AGE_SECONDS = 12 * 60 * 60;
 
 function problem(status: number, message: string, headers: Record<string, string> = {}) {
-  return NextResponse.json({ statusCode: status, message }, { status, headers });
+  return NextResponse.json(problemBody(status, message), { status, headers });
 }
 
 export async function POST(req: NextRequest) {

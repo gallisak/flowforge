@@ -33,4 +33,17 @@ describe('request bodies with fields the API does not know', () => {
   it('refuses unknown fields when creating a workflow', async () => {
     await api().post('/workflows').set('x-api-key', tenant.apiKey).send({ name: 'extra', steps, owner: 'someone' }).expect(400);
   });
+  it('refuses a "__proto__" key instead of silently dropping it', async () => {
+    const body = `{"name":"proto","steps":${JSON.stringify(steps)},"__proto__":{"admin":true}}`;
+
+    const res = await api().post('/workflows').set('x-api-key', tenant.apiKey).set('content-type', 'application/json').send(body).expect(400);
+
+    expect(res.body).toEqual({ statusCode: 400, message: 'JSON objects must not have a "__proto__" key', error: 'Bad Request' });
+  });
+
+  it('refuses a query parameter given twice', async () => {
+    const res = await api().get('/executions?limit=1&limit=2').set('x-api-key', tenant.apiKey).expect(400);
+
+    expect(res.body).toEqual({ statusCode: 400, message: 'query parameter limit must be given once', error: 'Bad Request' });
+  });
 });

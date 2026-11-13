@@ -82,6 +82,7 @@ describe('WorkflowForm', () => {
       missedRunPolicy: 'once',
       nextRunAt: null,
       version: 2,
+      revision: 2,
       createdAt: '2026-11-20T09:00:00Z',
     };
     render(<WorkflowForm workflow={workflow} timezones={ZONES} />);

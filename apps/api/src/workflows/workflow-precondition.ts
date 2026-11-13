@@ -2,12 +2,12 @@ export const WORKFLOW_CHANGED = 'The workflow was changed by someone else; reloa
 
 const ENTITY_TAG = /^(?:W\/)?"([^"]*)"$/;
 
-export function entityTagOf(version: number): string {
-  return `"${version}"`;
+export function entityTagOf(revision: number): string {
+  return `"${revision}"`;
 }
 
-export function matchesPrecondition(ifMatch: string, version: number): boolean {
+export function matchesPrecondition(ifMatch: string, revision: number): boolean {
   const candidates = ifMatch.split(',').map((candidate) => candidate.trim());
   if (candidates.length === 1 && candidates[0] === '*') return true;
-  return candidates.some((candidate) => ENTITY_TAG.exec(candidate)?.[1] === String(version));
+  return candidates.some((candidate) => ENTITY_TAG.exec(candidate)?.[1] === String(revision));
 }

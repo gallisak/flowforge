@@ -26,7 +26,7 @@ export class ListWorkflowsQuery {
 }
 
 function tagged(res: Response, workflow: Workflow): Workflow {
-  res.setHeader('etag', entityTagOf(workflow.version));
+  res.setHeader('etag', entityTagOf(workflow.revision));
   res.setHeader('access-control-expose-headers', 'ETag');
   return workflow;
 }

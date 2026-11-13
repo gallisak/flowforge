@@ -39,6 +39,7 @@ describe('validateWorkflow', () => {
     ['a negative delay', [{ id: 'a', type: 'delay', ms: -1 }], 'Step 1 needs a number of milliseconds from 0 to 3600000'],
     ['a delay above one hour', [{ id: 'a', type: 'delay', ms: 3_600_001 }], 'Step 1 needs a number of milliseconds from 0 to 3600000'],
     ['a transform without expression', [{ id: 'a', type: 'transform' }], 'Step 1 needs an expression'],
+    ['a misspelled field', [{ id: 'a', type: 'http', url: 'https://x.test', header: {} }], 'Step 1 has a field "header" that http steps do not have'],
   ])('rejects steps with %s', (_case, steps, message) => {
     const error = stepsError(steps);
     if (typeof message === 'string') expect(error).toBe(message);
@@ -87,6 +88,7 @@ describe('validateWorkflow with values the API accepted before', () => {
     missedRunPolicy: 'once',
     nextRunAt: null,
     version: 1,
+    revision: 1,
     createdAt: '2026-11-20T09:00:00Z',
   };
 
@@ -113,6 +115,7 @@ describe('changesFrom', () => {
     missedRunPolicy: 'once',
     nextRunAt: null,
     version: 3,
+    revision: 3,
     createdAt: '2026-11-20T09:00:00Z',
   };
 

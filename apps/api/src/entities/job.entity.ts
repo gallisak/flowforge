@@ -49,6 +49,6 @@ export class Job {
   @Column({ type: 'text', nullable: true })
   lastError: string | null;
 
-  @CreateDateColumn()
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 }

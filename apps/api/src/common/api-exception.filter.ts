@@ -1,5 +1,6 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Response } from 'express';
+import { STATUS_CODES } from 'http';
 import { TooManyRequestsException } from '../limits/too-many-requests';
 
 interface ClientError {
@@ -28,13 +29,13 @@ export class ApiExceptionFilter implements ExceptionFilter {
       const status = exception.getStatus();
       const body = exception.getResponse();
       if (status >= 500) this.logger.error(exception.message, exception.stack);
-      res.status(status).json(typeof body === 'string' ? { statusCode: status, message: body } : body);
+      res.status(status).json(typeof body === 'string' ? { statusCode: status, message: body, error: STATUS_CODES[status] } : body);
       return;
     }
 
     const clientError = asClientError(exception);
     if (clientError) {
-      res.status(clientError.status).json({ statusCode: clientError.status, message: clientError.message });
+      res.status(clientError.status).json({ statusCode: clientError.status, message: clientError.message, error: STATUS_CODES[clientError.status] });
       return;
     }
 
@@ -43,6 +44,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
       message: 'Internal server error',
+      error: STATUS_CODES[HttpStatus.INTERNAL_SERVER_ERROR],
     });
   }
 }

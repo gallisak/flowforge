@@ -208,6 +208,21 @@ describe('execution notifications', () => {
     expect(listed.body.every((event: Record<string, unknown>) => !('payload' in event) && event.status === 'dead')).toBe(true);
   });
 
+  it('records a broken connection without the text of the network error', async () => {
+    receiver.setHandler((_req, res) => {
+      res.socket?.destroy();
+    });
+
+    const execution = await execute(tenant, [{ id: 'note', type: 'log', message: 'hi' }]);
+
+    await eventually(async () =>
+      expect(await ctx.ds.getRepository(OutboxEvent).findOneByOrFail({ executionId: execution.id })).toMatchObject({
+        status: 'dead',
+        lastError: 'delivery failed: connection error',
+      }),
+    );
+  });
+
   it.each([
     'http://169.254.169.254/latest',
     'http://localhost:1/x',

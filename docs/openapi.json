@@ -464,7 +464,7 @@
           }
         },
         "operationId": "updateWorkflow",
-        "description": "A new version is recorded only when the steps differ from the current ones. Send `If-Match` with the `ETag` of the loaded workflow to refuse the change with `412` when someone else changed the steps in the meantime; the version, and so the entity tag, covers the steps only."
+        "description": "A new version is recorded only when the steps differ from the current ones. Send `If-Match` with the `ETag` of the loaded workflow to refuse the change with `412` when someone else changed the workflow in the meantime; the revision, and so the entity tag, grows with any change of the name, steps, schedule or missed run policy."
       },
       "delete": {
         "tags": [
@@ -1798,7 +1798,8 @@
         "type": "object",
         "required": [
           "statusCode",
-          "message"
+          "message",
+          "error"
         ],
         "properties": {
           "statusCode": {
@@ -1819,7 +1820,8 @@
             "description": "Validation errors are returned as a list, one message per problem."
           },
           "error": {
-            "type": "string"
+            "type": "string",
+            "description": "HTTP reason phrase of the status, for example `Bad Request`."
           }
         },
         "description": "Every error has this shape. Unexpected errors are answered with 500 and the message \"Internal server error\"; details are only logged, with the request id."
@@ -1871,7 +1873,8 @@
             "maxLength": 65536,
             "description": "Template. Values are encoded for the body format: inside a JSON string they are escaped, in a JSON value position they become JSON values, in a form body they are percent-encoded. A JSON body with a backslash right before a placeholder inside a string is refused."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "TransformStep": {
         "type": "object",
@@ -1894,7 +1897,8 @@
             "maxLength": 4096,
             "description": "JavaScript expression evaluated in an isolated QuickJS sandbox with `ctx = { input, steps }`; limited in time, memory and stack, without access to the host. It must return a JSON value, not a promise."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "LogStep": {
         "type": "object",
@@ -1917,7 +1921,8 @@
             "maxLength": 2048,
             "description": "Template, for example `order {{ input.id }}`."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "DelayStep": {
         "type": "object",
@@ -1941,7 +1946,8 @@
             "maximum": 3600000,
             "description": "Durable timer: the job is parked until the wake-up time and does not hold a worker slot."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "Step": {
         "oneOf": [
@@ -2073,6 +2079,7 @@
           "missedRunPolicy",
           "nextRunAt",
           "version",
+          "revision",
           "createdAt"
         ],
         "properties": {
@@ -2116,7 +2123,13 @@
           },
           "version": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "Version of the steps; a new one is recorded only when the steps change."
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Grows with every change of the name, steps, schedule or missed run policy; the `ETag` of the workflow."
           },
           "createdAt": {
             "type": "string",
@@ -2586,6 +2599,7 @@
           "missedRunPolicy",
           "nextRunAt",
           "version",
+          "revision",
           "createdAt"
         ],
         "properties": {
@@ -2627,6 +2641,11 @@
           "version": {
             "type": "integer",
             "minimum": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Grows with every change of the name, steps, schedule or missed run policy; the `ETag` of the workflow."
           },
           "createdAt": {
             "type": "string",
@@ -2882,7 +2901,7 @@
         }
       },
       "PreconditionFailed": {
-        "description": "`If-Match` does not match the current version: the workflow was changed by someone else. The message is exactly `The workflow was changed by someone else; reload it and try again`.",
+        "description": "`If-Match` does not match the current revision: the workflow was changed by someone else. The message is exactly `The workflow was changed by someone else; reload it and try again`.",
         "content": {
           "application/json": {
             "schema": {
@@ -2930,7 +2949,7 @@
         }
       },
       "ETag": {
-        "description": "Version of the workflow as a strong entity tag, for example `\"3\"`. Send it back in `If-Match` to change the workflow only if nobody changed its steps in the meantime.",
+        "description": "Revision of the workflow as a strong entity tag, for example `\"3\"`. Send it back in `If-Match` to change the workflow only if nobody changed it in the meantime.",
         "schema": {
           "type": "string"
         }
@@ -2960,7 +2979,7 @@
         "name": "If-Match",
         "in": "header",
         "required": false,
-        "description": "Entity tag from `ETag` of `GET /workflows/{id}`: `\"<version>\"`, `W/\"<version>\"`, a comma-separated list of tags, or `*`. When present and none of the tags equals the current version, the change is refused with `412`. Without the header the change is applied unconditionally.",
+        "description": "Entity tag from `ETag` of `GET /workflows/{id}`: `\"<revision>\"`, `W/\"<revision>\"`, a comma-separated list of tags, or `*`. When present and none of the tags equals the current revision, the change is refused with `412`. Without the header the change is applied unconditionally.",
         "schema": {
           "type": "string"
         }

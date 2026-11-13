@@ -22,6 +22,12 @@ export interface WorkflowPayload {
 }
 
 const STEP_TYPES = ['http', 'transform', 'log', 'delay'];
+const STEP_FIELDS: Record<string, readonly string[]> = {
+  http: ['id', 'type', 'url', 'method', 'headers', 'body'],
+  transform: ['id', 'type', 'expr'],
+  log: ['id', 'type', 'message'],
+  delay: ['id', 'type', 'ms'],
+};
 const STEP_ID = /^[a-z][a-z0-9_]{0,31}$/;
 const POLICIES: MissedRunPolicy[] = ['skip', 'once', 'all'];
 const MAX_DELAY_MS = 3_600_000;
@@ -60,6 +66,8 @@ function stepProblem(step: unknown, index: number, seen: Set<string>): string | 
   if (seen.has(step.id)) return `${at} repeats the id "${step.id}"`;
   seen.add(step.id);
   if (typeof step.type !== 'string' || !STEP_TYPES.includes(step.type)) return `${at} must have a type of ${STEP_TYPES.join(', ')}`;
+  const unknownField = Object.keys(step).find((field) => !STEP_FIELDS[step.type as string].includes(field));
+  if (unknownField !== undefined) return `${at} has a field "${unknownField}" that ${step.type} steps do not have`;
   switch (step.type) {
     case 'http':
       if (typeof step.url !== 'string' || step.url.trim() === '') return `${at} needs a url`;

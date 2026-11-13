@@ -19,6 +19,13 @@ export const STEP_LIMITS = {
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 const FORBIDDEN_HEADERS = new Set(['host', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'upgrade', 'expect']);
 
+const STEP_FIELDS: Record<(typeof STEP_TYPES)[number], readonly string[]> = {
+  http: ['id', 'type', 'url', 'method', 'headers', 'body'],
+  transform: ['id', 'type', 'expr'],
+  log: ['id', 'type', 'message'],
+  delay: ['id', 'type', 'ms'],
+};
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -78,6 +85,8 @@ export function validateSteps(raw: unknown): StepDefinition[] {
     if (seen.has(step.id)) invalid(`Duplicate step id: ${step.id}`);
     seen.add(step.id);
     if (!STEP_TYPES.includes(step.type as (typeof STEP_TYPES)[number])) invalid(`${at}.type is unknown`);
+    const unknownField = Object.keys(step).find((field) => !STEP_FIELDS[step.type as (typeof STEP_TYPES)[number]].includes(field));
+    if (unknownField !== undefined) invalid(`${at}.${unknownField} is not a field of ${step.type} steps`);
 
     if (step.type === 'http') validateHttpStep(step, at);
     if (step.type === 'transform') {

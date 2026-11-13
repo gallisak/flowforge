@@ -33,6 +33,8 @@ import { NotificationListIndexes1794322100000 } from './1794322100000-notificati
 import { TenantConsistentReferences1794322200000 } from './1794322200000-tenant-consistent-references';
 import { BoundedMaintenance1794322300000 } from './1794322300000-bounded-maintenance';
 import { IdleTenantClaims1794322400000 } from './1794322400000-idle-tenant-claims';
+import { TimeZoneAwareTimestamps1794322500000 } from './1794322500000-time-zone-aware-timestamps';
+import { WorkflowRevisions1794322600000 } from './1794322600000-workflow-revisions';
 
 export const migrations = [
   Baseline1794305090749,
@@ -70,4 +72,6 @@ export const migrations = [
   TenantConsistentReferences1794322200000,
   BoundedMaintenance1794322300000,
   IdleTenantClaims1794322400000,
+  TimeZoneAwareTimestamps1794322500000,
+  WorkflowRevisions1794322600000,
 ];

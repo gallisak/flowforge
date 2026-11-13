@@ -17,7 +17,7 @@ export class AdminTokenGuard implements CanActivate {
     const token = req.headers['x-admin-token'];
     if (typeof token !== 'string' || !safeEqual(token, this.config.adminToken)) {
       this.failures.recordFailure(bucket);
-      throw new ForbiddenException();
+      throw new ForbiddenException('Missing or invalid x-admin-token');
     }
     return true;
   }

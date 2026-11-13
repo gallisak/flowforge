@@ -1,6 +1,6 @@
 import { Body, Controller, NotFoundException, Param, ParseUUIDPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { randomBytes, randomUUID } from 'crypto';
-import { IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
 import { hashApiKey } from '../auth/api-key.guard';
 import { TenantDb } from '../db/tenant-db.service';
 import { Tenant } from '../entities';
@@ -10,6 +10,7 @@ import { AdminTokenGuard } from './admin-token.guard';
 export class CreateTenantDto {
   @IsString()
   @Length(2, 200)
+  @Matches(/\S/, { message: 'name must not be blank' })
   name: string;
 }
 

@@ -129,7 +129,7 @@ export class ExecutionsService {
       const query = em
         .createQueryBuilder(Execution, 'e')
         .select(SUMMARY_COLUMNS.map((column) => `e.${column}`))
-        .addSelect('e."createdAt"::text', 'cursor_created_at')
+        .addSelect(`(e."createdAt" AT TIME ZONE 'UTC')::text`, 'cursor_created_at')
         .where('e."tenantId" = :tenantId', { tenantId })
         .orderBy('e."createdAt"', 'DESC')
         .addOrderBy('e."id"', 'DESC')
@@ -137,7 +137,7 @@ export class ExecutionsService {
       if (filter.status) query.andWhere('e."status" = :status', { status: filter.status });
       if (filter.workflowId) query.andWhere('e."workflowId" = :workflowId', { workflowId: filter.workflowId });
       if (after) {
-        query.andWhere('(e."createdAt", e."id") < (CAST(:afterCreatedAt AS timestamp), CAST(:afterId AS uuid))', {
+        query.andWhere(`(e."createdAt", e."id") < (CAST(:afterCreatedAt AS timestamp) AT TIME ZONE 'UTC', CAST(:afterId AS uuid))`, {
           afterCreatedAt: after.createdAt,
           afterId: after.id,
         });
