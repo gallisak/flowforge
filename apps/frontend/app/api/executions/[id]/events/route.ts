@@ -45,10 +45,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   if (!upstream.ok || !upstream.body) {
-    const headers: Record<string, string> = { 'content-type': upstream.headers.get('content-type') ?? 'application/json' };
+    const headers: Record<string, string> = {
+      'content-type': upstream.headers.get('content-type') ?? 'application/json',
+      'cache-control': 'private, no-store',
+      vary: 'Cookie',
+    };
     const retryAfter = upstream.headers.get('retry-after');
     if (retryAfter) headers['retry-after'] = retryAfter;
-    return new NextResponse(await upstream.text().catch(() => ''), { status: upstream.status, headers });
+    const refused = new NextResponse(await upstream.text().catch(() => ''), { status: upstream.status, headers });
+    if (upstream.status === 401) refused.cookies.delete(API_KEY_COOKIE);
+    return refused;
   }
   return new Response(upstream.body, {
     headers: {

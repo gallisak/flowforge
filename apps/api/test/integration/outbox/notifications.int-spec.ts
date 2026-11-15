@@ -217,7 +217,8 @@ describe('execution notifications', () => {
 
     await eventually(async () =>
       expect(await ctx.ds.getRepository(OutboxEvent).findOneByOrFail({ executionId: execution.id })).toMatchObject({
-        lastError: 'endpoint answered with a redirect; notifications do not follow redirects',
+        lastError: 'endpoint answered 302, a redirect; notifications do not follow redirects',
+        lastStatusCode: 302,
       }),
     );
   });

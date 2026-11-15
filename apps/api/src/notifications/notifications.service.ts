@@ -2,7 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { isIP } from 'net';
 import { API_CONFIG, ApiConfig } from '../config/config';
 import { TenantDb } from '../db/tenant-db.service';
-import { isPublicAddress, nonBlockingResolver, Resolver } from '../engine/http/safe-http';
+import { isPublicAddress, nonBlockingResolver, normalizeHost, Resolver } from '../engine/http/safe-http';
 import { NotificationEndpoint, OutboxEvent, OutboxEventStatus } from '../entities';
 import { WebhookSecretsService } from '../webhooks/webhook-secrets.service';
 
@@ -43,7 +43,7 @@ export class NotificationsService {
     private readonly secrets: WebhookSecretsService,
     @Inject(API_CONFIG) config: ApiConfig,
   ) {
-    this.allowlist = new Set(config.ssrfAllowlist);
+    this.allowlist = new Set(config.ssrfAllowlist.map(normalizeHost));
   }
 
   get(tenantId: string): Promise<NotificationEndpointView> {
@@ -90,7 +90,7 @@ export class NotificationsService {
     if (!parsed) throw new BadRequestException('url is invalid');
     if (parsed.username || parsed.password) throw new BadRequestException('url must not contain credentials');
     if (parsed.hash) throw new BadRequestException('url must not contain a fragment');
-    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+    const host = normalizeHost(parsed.hostname);
     const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
     if (this.allowlist.has(host) || this.allowlist.has(`${host}:${port}`)) return;
     const literal = host.replace(/^\[|\]$/g, '');

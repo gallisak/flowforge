@@ -67,6 +67,17 @@ describe('execution events route', () => {
     expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
   });
 
+  it('forgets a key the API no longer accepts and keeps the refusal out of caches', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{"statusCode":401,"message":"Invalid API key"}', { status: 401, headers: { 'content-type': 'application/json' } }));
+
+    const res = await GET(make(), context);
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get('set-cookie')).toMatch(/ff_api_key=;/);
+    expect(res.headers.get('cache-control')).toBe('private, no-store');
+    expect(res.headers.get('vary')).toBe('Cookie');
+  });
+
   it('answers 504 when the API sends no headers before the deadline', async () => {
     vi.useFakeTimers();
     fetchMock.mockImplementationOnce(

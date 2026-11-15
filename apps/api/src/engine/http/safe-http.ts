@@ -35,7 +35,14 @@ export class DestinationNotAllowedError extends Error {
 
 export class InvalidRequestUrlError extends Error {}
 
-export class TooManyRedirectsError extends Error {}
+export class TooManyRedirectsError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 export class ResponseTooLargeError extends Error {
   constructor(limit: number) {
@@ -111,7 +118,7 @@ export function guardedLookup(resolve: Resolver) {
   };
 }
 
-function normalizeHost(hostname: string): string {
+export function normalizeHost(hostname: string): string {
   return hostname.toLowerCase().replace(/\.$/, '');
 }
 
@@ -162,7 +169,7 @@ export class SafeHttpClient {
         return { status: response.statusCode, body: await this.readBody(response) };
       }
       await response.body.dump();
-      if (hop >= this.options.maxRedirects) throw new TooManyRedirectsError(`more than ${this.options.maxRedirects} redirects`);
+      if (hop >= this.options.maxRedirects) throw new TooManyRedirectsError(`more than ${this.options.maxRedirects} redirects`, response.statusCode);
       const next = this.parse(new URL(location, url).toString());
       if (next.origin !== url.origin) {
         headers = Object.fromEntries(Object.entries(headers).filter(([name]) => CROSS_ORIGIN_HEADERS.has(name.toLowerCase())));

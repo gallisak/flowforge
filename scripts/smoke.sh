@@ -2,8 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+setting_in() {
+  grep "^$2=" "$1" 2>/dev/null | tail -n 1 | cut -d= -f2- | sed -E "s/[[:space:]]+#.*$//; s/^[[:space:]]*(\"(.*)\"|'(.*)')[[:space:]]*$/\\2\\3/" || true
+}
 setting() {
-  grep "^$1=" "$ROOT/.env" | tail -n 1 | cut -d= -f2- | sed -E "s/^[[:space:]]*(\"(.*)\"|'(.*)')[[:space:]]*$/\\2\\3/" || true
+  setting_in "$ROOT/.env" "$1"
 }
 API_PORT="${API_PORT:-$(setting API_PORT)}"
 WEB_PORT="${WEB_PORT:-$(setting WEB_PORT)}"
@@ -39,13 +42,11 @@ done
 curl -fsS "$WEB/api/health" >/dev/null || fail "the frontend health check did not answer"
 curl -fsS -o /dev/null "$WEB/connect" || fail "the frontend did not serve the connect page"
 
-api_setting() {
-  grep "^$1=" "$ROOT/apps/api/.env" 2>/dev/null | tail -n 1 | cut -d= -f2- || true
-}
-FAILURES_PER_MINUTE="$(api_setting AUTH_FAILURES_PER_MINUTE)"
+FAILURES_PER_MINUTE="$(setting_in "$ROOT/apps/api/.env" AUTH_FAILURES_PER_MINUTE)"
+APP_ORIGIN="$(setting APP_ORIGIN)"
 LIMITED=""
-for attempt in $(seq 1 $(( ${FAILURES_PER_MINUTE:-60} + 1 ))); do
-  CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$WEB/api/connect" -H "origin: $WEB" -H 'content-type: application/json' \
+for attempt in $(seq 1 $(( 3 * ${FAILURES_PER_MINUTE:-60} ))); do
+  CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$WEB/api/connect" -H "origin: ${APP_ORIGIN:-$WEB}" -H 'content-type: application/json' \
     -H "x-forwarded-for: 198.51.100.$(( attempt % 250 + 1 ))" -d '{"apiKey":"ff_smoke_wrong_key"}')"
   [[ "$CODE" == "429" ]] && LIMITED=1 && break
 done

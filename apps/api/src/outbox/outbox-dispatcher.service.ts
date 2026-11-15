@@ -154,7 +154,9 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
       const blocked = findDestinationError(error);
       if (blocked) return { kind: 'dead', error: blocked.message };
       if (error instanceof InvalidRequestUrlError) return { kind: 'dead', error: error.message };
-      if (error instanceof TooManyRedirectsError) return { kind: 'retry', error: 'endpoint answered with a redirect; notifications do not follow redirects' };
+      if (error instanceof TooManyRedirectsError) {
+        return { kind: 'retry', error: `endpoint answered ${error.status}, a redirect; notifications do not follow redirects`, status: error.status };
+      }
       const name = (error as Error).name;
       const timedOut = name === 'TimeoutError' || name === 'HeadersTimeoutError' || name === 'BodyTimeoutError';
       return { kind: 'retry', error: timedOut ? 'delivery timed out' : 'delivery failed: connection error' };
