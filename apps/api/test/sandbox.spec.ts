@@ -1,5 +1,5 @@
 import { Worker } from 'worker_threads';
-import { SANDBOX_STACK_BYTES, TransformError, TransformSandbox } from '../src/engine/sandbox/transform-sandbox';
+import { SANDBOX_STACK_BYTES, TRANSFORM_ERROR_MAX_CHARS, TransformError, TransformSandbox } from '../src/engine/sandbox/transform-sandbox';
 
 describe('TransformSandbox', () => {
   const limits = { timeoutMs: 100, memoryBytes: 16 * 1024 * 1024, stackBytes: SANDBOX_STACK_BYTES, outputMaxBytes: 1024 * 1024 };
@@ -211,6 +211,19 @@ describe('TransformSandbox result size', () => {
 
     expect(error).toBeInstanceOf(TransformError);
     expect(Math.max(...copied)).toBeLessThan(2 * 1024 * 1024);
+  });
+
+  it.each([
+    ['a thrown value with a huge name', '(() => { throw { name: "n".repeat(500000) }; })()'],
+    ['a thrown value with a huge message', '(() => { throw new Error("m".repeat(500000)); })()'],
+    ['a value thrown after breaking out of the wrapper', '0); }); throw { name: "n".repeat(3000000) }; (function (ctx) { return (0'],
+  ])('keeps the error text short for %s', async (_case, expr) => {
+    const error = await sandbox.evaluate(expr, {}).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(TransformError);
+    expect((error as TransformError).message.length).toBeLessThanOrEqual(TRANSFORM_ERROR_MAX_CHARS);
   });
 
   it('cannot replace the serialisation the wrapper uses', async () => {

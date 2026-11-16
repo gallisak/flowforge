@@ -6,6 +6,10 @@ x-logging: &logging
   driver: json-file
   options: { max-size: 10m, max-file: '3' }
 
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ['no-new-privileges:true']
+
 x-ops-healthcheck: &ops-healthcheck
   test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:9100/health/ready || exit 1']
   interval: 5s
@@ -33,6 +37,9 @@ services:
       retries: 20
     restart: unless-stopped
     logging: *logging
+    security_opt: ['no-new-privileges:true']
+    mem_limit: 1g
+    networks: [backend]
 
   migrate:
     build: ./apps/api
@@ -48,6 +55,8 @@ services:
       postgres: { condition: service_healthy }
     restart: 'no'
     logging: *logging
+    <<: *hardening
+    networks: [backend]
 
   api:
     image: flowforge-api:local
@@ -67,6 +76,8 @@ services:
     restart: unless-stopped
     mem_limit: 1g
     logging: *logging
+    <<: *hardening
+    networks: [backend, frontend]
 
   worker:
     image: flowforge-api:local
@@ -86,6 +97,8 @@ services:
     restart: unless-stopped
     mem_limit: 1g
     logging: *logging
+    <<: *hardening
+    networks: [backend]
     deploy:
       replicas: 2
 
@@ -107,6 +120,8 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     logging: *logging
+    <<: *hardening
+    networks: [backend]
     deploy:
       replicas: 2
 
@@ -129,9 +144,11 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     logging: *logging
+    <<: *hardening
+    networks: [frontend]
 
   edge:
-    image: nginxinc/nginx-unprivileged:1.27-alpine
+    image: nginxinc/nginx-unprivileged:1.28-alpine
     volumes:
       - ./docker/edge/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -146,6 +163,12 @@ services:
     restart: unless-stopped
     mem_limit: 128m
     logging: *logging
+    <<: *hardening
+    networks: [frontend]
+
+networks:
+  backend:
+  frontend:
 
 volumes:
   pgdata:

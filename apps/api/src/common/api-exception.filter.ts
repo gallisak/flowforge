@@ -16,6 +16,22 @@ function asClientError(exception: unknown): { status: number; message: string } 
   return { status, message: candidate.message ?? 'Bad request' };
 }
 
+const DATABASE_UNAVAILABLE_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EHOSTUNREACH', '57014', '57P01', '57P02', '57P03', '53300']);
+const DATABASE_UNAVAILABLE_MESSAGES = [/^timeout exceeded when trying to connect/, /^Connection terminated/, /^Query read timeout/];
+const UNAVAILABLE_RETRY_AFTER_SECONDS = 5;
+
+interface DatabaseError {
+  code?: unknown;
+  driverError?: { code?: unknown };
+}
+
+function isDatabaseUnavailable(error: Error): boolean {
+  const { code, driverError } = error as Error & DatabaseError;
+  const codes = [code, driverError?.code].filter((value): value is string => typeof value === 'string');
+  if (codes.some((value) => DATABASE_UNAVAILABLE_CODES.has(value) || value.startsWith('08'))) return true;
+  return DATABASE_UNAVAILABLE_MESSAGES.some((pattern) => pattern.test(error.message));
+}
+
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('ApiExceptionFilter');
@@ -40,6 +56,16 @@ export class ApiExceptionFilter implements ExceptionFilter {
     }
 
     const error = exception instanceof Error ? exception : new Error(String(exception));
+    if (isDatabaseUnavailable(error)) {
+      this.logger.error(`database unavailable: ${error.message}`);
+      res.setHeader('Retry-After', String(UNAVAILABLE_RETRY_AFTER_SECONDS));
+      res.status(HttpStatus.SERVICE_UNAVAILABLE).json({
+        statusCode: HttpStatus.SERVICE_UNAVAILABLE,
+        message: 'The service is temporarily unavailable, try again later',
+        error: STATUS_CODES[HttpStatus.SERVICE_UNAVAILABLE],
+      });
+      return;
+    }
     this.logger.error(`unhandled error: ${error.message}`, error.stack);
     res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       statusCode: HttpStatus.INTERNAL_SERVER_ERROR,

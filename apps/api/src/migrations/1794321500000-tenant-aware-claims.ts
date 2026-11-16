@@ -195,7 +195,7 @@ const QUEUE_DEPTH = `
         $$
     `;
 
-const FAIR_OUTBOX_CLAIM = `
+export const FAIR_OUTBOX_CLAIM = `
       CREATE FUNCTION claim_outbox_events(p_worker_id text, p_lease_seconds integer, p_limit integer, p_per_tenant integer)
         RETURNS SETOF "outbox_events"
         LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp

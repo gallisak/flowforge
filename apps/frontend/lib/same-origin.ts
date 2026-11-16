@@ -16,7 +16,7 @@ export function isSameOrigin(req: NextRequest): boolean {
   if (!origin) return false;
   const configured = configuredOrigin();
   if (configured) return origin === configured;
-  const host = req.headers.get('x-forwarded-host')?.split(',')[0].trim() || req.headers.get('host');
+  const host = req.headers.get('host');
   if (!host) return false;
   try {
     return new URL(origin).host === host;

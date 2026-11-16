@@ -7,6 +7,7 @@ import { DisconnectButton } from '@/components/disconnect-button';
 import { isSameOrigin } from '@/lib/same-origin';
 import { serverConfigProblems } from '@/lib/server-config';
 
+const SECRET = 's'.repeat(32);
 const router = { push: vi.fn(), refresh: vi.fn(), replace: vi.fn() };
 vi.mock('next/navigation', () => ({ useRouter: () => router, usePathname: () => '/' }));
 
@@ -32,13 +33,18 @@ describe('frontend hardening', () => {
   });
 
   it('requires API_URL in production instead of calling itself', () => {
-    expect(serverConfigProblems({ NODE_ENV: 'production' })).toEqual(['API_URL is required in production']);
-    expect(serverConfigProblems({ NODE_ENV: 'production', API_URL: 'http://api:3000' })).toEqual([]);
+    expect(serverConfigProblems({ NODE_ENV: 'production', CLIENT_ADDRESS_SECRET: SECRET })).toEqual(['API_URL is required in production']);
+    expect(serverConfigProblems({ NODE_ENV: 'production', API_URL: 'http://api:3000', CLIENT_ADDRESS_SECRET: SECRET })).toEqual([]);
     expect(serverConfigProblems({ NODE_ENV: 'development' })).toEqual([]);
   });
 
-  it('takes the first host of a forwarded host list', () => {
-    expect(isSameOrigin(request('/x', { origin: 'https://flowforge.example', 'x-forwarded-host': 'flowforge.example, proxy.internal' }))).toBe(true);
+  it('requires the client address secret in production', () => {
+    expect(serverConfigProblems({ NODE_ENV: 'production', API_URL: 'http://api:3000' })).toEqual(['CLIENT_ADDRESS_SECRET is required in production']);
+  });
+
+  it('compares the origin with the host header and ignores a forwarded host the client can set', () => {
+    expect(isSameOrigin(request('/x', { origin: 'http://flowforge.example', host: 'flowforge.example' }))).toBe(true);
+    expect(isSameOrigin(request('/x', { origin: 'https://evil.example', host: 'flowforge.example', 'x-forwarded-host': 'evil.example' }))).toBe(false);
   });
 
   it('compares the origin with APP_ORIGIN when it is configured, whatever the host header says', () => {

@@ -14,7 +14,7 @@ function describe(name, message, limits) {
   if (message === 'interrupted') return 'transform timed out after ' + limits.timeoutMs + ' ms';
   if (message === 'out of memory') return 'transform exceeded the memory limit';
   if (message === 'stack overflow') return 'transform exceeded the stack limit';
-  return 'transform failed: ' + name + ': ' + message.slice(0, 500);
+  return 'transform failed: ' + String(name).slice(0, 100) + ': ' + String(message).slice(0, 500);
 }
 
 function describeHandle(vm, handle, limits) {
@@ -54,6 +54,7 @@ function runnerSource(outputMaxChars) {
     '   catch (thrown) {' +
     '     let name = "Error"; let message = "";' +
     '     try { name = toText((thrown && thrown.name) || "Error"); } catch (ignored) {}' +
+    '     if (name.length > 100) name = name.slice(0, 100);' +
     '     try { message = toText(thrown && typeof thrown === "object" && "message" in thrown ? thrown.message : thrown); } catch (ignored) {}' +
     '     return "E" + stringify([name, message.length > 1000 ? message.slice(0, 1000) : message]);' +
     '   }' +

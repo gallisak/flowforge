@@ -19,6 +19,7 @@
     "test:unit": "jest --selectProjects unit",
     "test:int": "jest --selectProjects integration",
     "load:fairness": "ts-node --transpile-only test/load/fairness.ts",
+    "load:idle-claims": "ts-node --transpile-only test/load/idle-claims.ts",
     "chaos:kill-workers": "ts-node --transpile-only test/chaos/kill-workers.ts"
   },
   "dependencies": {

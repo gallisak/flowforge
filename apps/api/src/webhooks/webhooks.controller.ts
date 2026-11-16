@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Controller,
   Headers,
   HttpCode,
@@ -58,7 +59,7 @@ export class WebhooksController {
     const tenantId = await this.db.resolveWebhookTenant(workflowId);
     if (!tenantId) throw reject();
     const { workflow, secrets } = await this.db.run(tenantId, async (em) => ({
-      workflow: await em.findOne(Workflow, { where: { id: workflowId } }),
+      workflow: await em.findOne(Workflow, { where: { tenantId, id: workflowId } }),
       secrets: await this.secrets.activeSecrets(em, tenantId),
     }));
     if (!workflow || !workflow.enabled) throw reject();
@@ -74,12 +75,8 @@ export class WebhooksController {
     if (!messageId) throw reject();
     await this.rateLimit.consume(tenantId, res);
 
-    const execution = await this.executions.enqueue(
-      workflow,
-      body as Record<string, unknown>,
-      'webhook',
-      `webhook:${workflowId}:${messageId}`,
-    );
+    const execution = await this.executions.enqueue(workflow, body as Record<string, unknown>, 'webhook', `webhook:${messageId}`);
+    if (execution.workflowId !== workflowId) throw new ConflictException('This webhook-id was already delivered to another workflow');
     return { executionId: execution.id };
   }
 }

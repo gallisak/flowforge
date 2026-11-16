@@ -233,6 +233,22 @@ describe('nextOccurrence around clock changes that are not one hour long or happ
     );
   });
 
+  it('keeps both runs of a twice-a-day schedule when one of them falls into the gap', () => {
+    expect(chain({ cron: '0 */12 * * *', timezone: 'America/Santiago' }, '2026-09-05T16:00:00Z', 3)).toEqual([
+      '2026-09-05T16:00:00.000Z',
+      '2026-09-06T04:00:00.000Z',
+      '2026-09-06T15:00:00.000Z',
+    ]);
+  });
+
+  it('moves an every-two-hours run out of the gap instead of dropping it', () => {
+    expect(chain({ cron: '0 */2 * * *', timezone: 'America/New_York' }, '2026-03-08T05:00:00Z', 3)).toEqual([
+      '2026-03-08T05:00:00.000Z',
+      '2026-03-08T07:00:00.000Z',
+      '2026-03-08T08:00:00.000Z',
+    ]);
+  });
+
   it('does not repeat a fixed time when the next run is computed inside the repeated hour', () => {
     expect(nextOccurrence({ cron: '30 1 * * *', timezone: 'America/New_York' }, at('2026-11-01T06:10:00Z')).toISOString()).toBe(
       '2026-11-02T06:30:00.000Z',

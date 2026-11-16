@@ -97,6 +97,16 @@ describe('connect route', () => {
     expect(res.headers.get('set-cookie')).toBeNull();
   });
 
+  it('does not follow a redirect from the API and stores nothing', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://collector.example/steal' } }));
+
+    const res = await POST(make('POST', { apiKey: 'ff_valid' }));
+
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+    expect(res.status).toBe(502);
+    expect(res.headers.get('set-cookie')).toBeNull();
+  });
+
   it('refuses a request from another site', async () => {
     const res = await POST(make('POST', { apiKey: 'ff_valid' }, 'https://evil.example'));
 

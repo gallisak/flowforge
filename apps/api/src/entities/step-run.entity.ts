@@ -1,9 +1,10 @@
-import { Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, CreateDateColumn, Entity, Index, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
 import { Execution } from './execution.entity';
 
 export type StepRunStatus = 'running' | 'waiting' | 'succeeded' | 'failed';
 
 @Entity('step_runs')
+@Check('CHK_step_runs_status', `"status" IN ('running', 'waiting', 'succeeded', 'failed')`)
 @Index('UQ_step_runs_execution_step', ['executionId', 'stepIndex'], { unique: true })
 export class StepRun {
   @PrimaryGeneratedColumn('uuid')

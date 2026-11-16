@@ -77,6 +77,10 @@ export class ExecutionEventsHub implements OnApplicationBootstrap, OnApplication
     try {
       await client.connect();
       await client.query(`LISTEN ${EXECUTION_EVENTS_CHANNEL}`);
+      if (this.stopped) {
+        await client.end().catch(() => undefined);
+        return;
+      }
       this.client = client;
       this.reconnectDelayMs = RECONNECT_MIN_MS;
       this.schedulePing(client);

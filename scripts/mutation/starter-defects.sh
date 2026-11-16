@@ -21,7 +21,7 @@ MUTANTS = {
         lockedUntil: null,
       });
       if (result.affected !== 1) return false;
-      await em.update(Execution, job.executionId, { ...execution, error: null });
+      await em.update(Execution, executionOf(job), { ...execution, error: null });
       await recordExecutionEvent(em, job.executionId);
       return true;
     });
@@ -33,7 +33,7 @@ MUTANTS = {
     });
     if (!owned) return false;
     await this.db.run(job.tenantId, async (em) => {
-      await em.update(Execution, job.executionId, { ...execution, error: null });
+      await em.update(Execution, executionOf(job), { ...execution, error: null });
       await recordExecutionEvent(em, job.executionId);
     });
     return true;
@@ -71,7 +71,7 @@ MUTANTS = {
         "about": "the frontend proxy calls the API without a deadline, as in the starter",
         "app": "frontend",
         "file": "app/api/proxy/[...path]/route.ts",
-        "edits": [("      cache: 'no-store',\n      signal: AbortSignal.timeout(API_TIMEOUT_MS),\n", "      cache: 'no-store',\n")],
+        "edits": [("      redirect: 'manual',\n      signal: upstreamSignal(req.signal, API_TIMEOUT_MS),\n", "      redirect: 'manual',\n")],
         "test": ["npx", "vitest", "run", "test/proxy-route.test.ts", "-t", "deadline"],
     },
     "proxy-without-path-check": {
@@ -80,6 +80,23 @@ MUTANTS = {
         "file": "app/api/proxy/[...path]/route.ts",
         "edits": [("  if (!path.every((segment) => SAFE_SEGMENT.test(segment))) return problem(400, 'Invalid path');\n", "")],
         "test": ["npx", "vitest", "run", "test/proxy-route.test.ts", "-t", "path segments"],
+    },
+    "timestamps-without-time-zone": {
+        "about": "creation and step start times stay timestamp without time zone, as in the starter",
+        "app": "api",
+        "file": "src/migrations/1794322500000-time-zone-aware-timestamps.ts",
+        "edits": [("      await queryRunner.query(`ALTER TABLE \"${table}\" ALTER COLUMN \"${column}\" TYPE timestamptz`);\n", "")],
+        "test": ["npx", "jest", "--ci", "test/integration/db/database-time-zone", "-t", "real instant"],
+    },
+    "signature-decided-by-plain-comparison": {
+        "about": "the webhook signature is decided by an ordinary comparison even though timingSafeEqual is still called",
+        "app": "api",
+        "file": "src/webhooks/signature.ts",
+        "edits": [(
+            "matched = timingSafeEqual(expected, candidate) || matched;",
+            "matched = (timingSafeEqual(expected, candidate), expected.equals(candidate)) || matched;",
+        )],
+        "test": ["npx", "jest", "--ci", "test/integration/findings/F-12"],
     },
     "connect-without-origin-check": {
         "about": "POST /api/connect stores a key posted by any site (login CSRF), as in the starter",

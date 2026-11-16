@@ -263,7 +263,7 @@ describe('query plans of the hot paths on a realistically sized database', () =>
       await db.run(TENANT_1, (em) => em.findOne(WorkflowVersion, { where: { workflowId: WORKFLOW_1, version: 1 } }));
     });
 
-    expectIndexed(plans, 'UQ_step_runs_execution_step', 'UQ_workflow_versions_workflow_version');
+    expectIndexed(plans, 'UQ_step_runs_execution_step', 'UQ_workflow_versions_tenant_workflow_version');
   });
 
   it('claims the next due schedule from the index of next runs', async () => {

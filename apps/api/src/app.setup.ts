@@ -32,6 +32,8 @@ export function isJsonInUtf8(contentType: string | undefined): boolean {
   });
 }
 
+export const REQUEST_BODY_MAX_BYTES = 1024 * 1024;
+
 function protectResponses(_req: IncomingMessage, res: ServerResponse, next: () => void): void {
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('cache-control', 'no-store');
@@ -48,7 +50,7 @@ export function configureApp(app: INestApplication): INestApplication {
   app.use(assignRequestId);
   app.use(protectResponses);
   app.use(acceptOnlyJsonBodies);
-  (app as NestExpressApplication).useBodyParser('json', { inflate: false, reviver: rejectUnstorableJson, verify: keepRawBodyAndRejectDeepJson });
+  (app as NestExpressApplication).useBodyParser('json', { limit: REQUEST_BODY_MAX_BYTES, inflate: false, reviver: rejectUnstorableJson, verify: keepRawBodyAndRejectDeepJson });
   app.use(enterRequestContext);
   app.useGlobalPipes(new SingleQueryValuesPipe(), new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new ApiExceptionFilter());

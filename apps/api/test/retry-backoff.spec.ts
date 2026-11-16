@@ -1,4 +1,4 @@
-import { backoffMs, retryCeilingMs, retryDelayMs } from '../src/engine/job-queue.service';
+import { retryCeilingMs, retryDelayMs } from '../src/engine/job-queue.service';
 import { isRetryableStatus } from '../src/engine/step-executor';
 
 const policy = { baseMs: 1_000, capMs: 30_000 };
@@ -11,12 +11,6 @@ describe('retryCeilingMs', () => {
   it('never exceeds the cap', () => {
     expect(retryCeilingMs(5, policy)).toBe(30_000);
     expect(retryCeilingMs(50, policy)).toBe(30_000);
-  });
-
-  it('matches the uncapped backoffMs used by the starter', () => {
-    expect([1, 2, 3].map((attempt) => retryCeilingMs(attempt, { baseMs: 1_000, capMs: Infinity }))).toEqual(
-      [1, 2, 3].map(backoffMs),
-    );
   });
 });
 

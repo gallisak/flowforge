@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { gzipSync } from 'zlib';
+import { REQUEST_BODY_MAX_BYTES } from '../../../src/app.setup';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
 import { createWebhookTarget, signWebhook, WebhookTarget } from '../../support/webhooks';
@@ -69,6 +70,6 @@ describe('webhook request boundary', () => {
   });
 
   it('rejects a body above the size limit', async () => {
-    await deliver(JSON.stringify({ pad: 'a'.repeat(200_000) })).expect(413);
+    await deliver(JSON.stringify({ pad: 'a'.repeat(REQUEST_BODY_MAX_BYTES) })).expect(413);
   });
 });

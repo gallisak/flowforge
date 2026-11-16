@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
     check = await fetch(`${API_URL}/workflows`, {
       headers: { 'x-api-key': key, ...clientAddressHeaders(req.headers) },
       cache: 'no-store',
+      redirect: 'manual',
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
   } catch (error) {

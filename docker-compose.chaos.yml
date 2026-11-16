@@ -2,7 +2,11 @@ services:
   sink:
     image: node:24-alpine
     command: ['node', '/sink/sink.js']
+    user: node
     init: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    networks: [backend]
     volumes:
       - ./docker/chaos:/sink:ro
     ports: ['127.0.0.1:${SINK_PORT:-18080}:8080']

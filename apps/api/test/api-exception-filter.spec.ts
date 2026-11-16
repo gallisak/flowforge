@@ -67,4 +67,20 @@ describe('ApiExceptionFilter', () => {
     expect(response.statusCode).toBe(500);
     expect(JSON.stringify(response.body)).not.toContain('pool exhausted');
   });
+
+  it.each([
+    ['the pool cannot get a connection in time', new Error('timeout exceeded when trying to connect')],
+    ['the connection times out', new Error('Connection terminated due to connection timeout')],
+    ['a query gets no answer', new Error('Query read timeout')],
+    ['the server refuses connections', Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' })],
+    ['a statement is cancelled by the statement timeout', Object.assign(new Error('canceling statement due to statement timeout'), { driverError: { code: '57014' } })],
+    ['the server is shutting down', Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' })],
+  ])('answers 503 with Retry-After when %s', (_case, failure) => {
+    const response = respond(failure);
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['Retry-After']).toBe('5');
+    expect(response.body).toEqual({ statusCode: 503, message: 'The service is temporarily unavailable, try again later', error: 'Service Unavailable' });
+    expect(JSON.stringify(response.body)).not.toMatch(/10\.0\.0\.5|statement|ECONNREFUSED/);
+  });
 });

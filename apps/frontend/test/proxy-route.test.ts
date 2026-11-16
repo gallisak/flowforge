@@ -52,6 +52,33 @@ describe('API proxy route', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('does not follow a redirect from the API, so the key never reaches another host', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://collector.example/steal' } }));
+
+    const res = await GET(make('/api/proxy/workflows'), context('workflows'));
+
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+    expect(res.status).toBe(502);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('stops waiting for the API when the browser goes away', async () => {
+    const browser = new AbortController();
+    const req = make('/api/proxy/workflows');
+    Object.defineProperty(req, 'signal', { value: browser.signal });
+    fetchMock.mockImplementationOnce(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+          browser.abort();
+        }),
+    );
+
+    await GET(req, context('workflows'));
+
+    expect((fetchMock.mock.calls[0][1].signal as AbortSignal).aborted).toBe(true);
+  });
+
   it('answers 401 without calling the API when no key is stored', async () => {
     const res = await GET(make('/api/proxy/workflows', { key: null }), context('workflows'));
 

@@ -13,10 +13,10 @@ MUTANTS = {
         "app": "api",
         "file": "src/engine/job-queue.service.ts",
         "edits": [
-            ("""`SELECT 1 FROM jobs WHERE id = $1 AND "lockedBy" = $2 AND attempts = $3 AND status = 'running' FOR UPDATE`,
-        [job.id, workerId, job.attempts],""", """`SELECT 1 FROM jobs WHERE id = $1 AND "lockedBy" = $2 AND status = 'running' FOR UPDATE`,
-        [job.id, workerId],"""),
-            ("return { id: job.id, lockedBy: workerId, attempts: job.attempts, status: 'running' as const };", "return { id: job.id, lockedBy: workerId, status: 'running' as const };"),
+            ("""`SELECT 1 FROM jobs WHERE "tenantId" = $1 AND id = $2 AND "lockedBy" = $3 AND attempts = $4 AND status = 'running' FOR UPDATE`,
+        [job.tenantId, job.id, workerId, job.attempts],""", """`SELECT 1 FROM jobs WHERE "tenantId" = $1 AND id = $2 AND "lockedBy" = $3 AND status = 'running' FOR UPDATE`,
+        [job.tenantId, job.id, workerId],"""),
+            ("return { tenantId: job.tenantId, id: job.id, lockedBy: workerId, attempts: job.attempts, status: 'running' as const };", "return { tenantId: job.tenantId, id: job.id, lockedBy: workerId, status: 'running' as const };"),
         ],
         "test": ["npx", "jest", "--ci", "test/integration/queue/write-fencing", "-t", "after the same worker claimed the job again"],
     },
@@ -26,7 +26,7 @@ MUTANTS = {
         "file": "src/engine/job-queue.service.ts",
         "edits": [
             ("      if (owned.length !== 1) throw new LeaseLostError(job.id);\n", ""),
-            ("return { id: job.id, lockedBy: workerId, attempts: job.attempts, status: 'running' as const };", "return { id: job.id };"),
+            ("return { tenantId: job.tenantId, id: job.id, lockedBy: workerId, attempts: job.attempts, status: 'running' as const };", "return { tenantId: job.tenantId, id: job.id };"),
         ],
         "test": ["npx", "jest", "--ci", "test/integration/queue/write-fencing", "-t", "after another worker took the job over"],
     },

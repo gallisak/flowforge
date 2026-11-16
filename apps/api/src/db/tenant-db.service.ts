@@ -79,6 +79,11 @@ export class TenantDb {
     });
   }
 
+  async setTenantApiKey(tenantId: string, apiKeyHash: string): Promise<boolean> {
+    const [row]: Array<{ id: string | null }> = await this.dataSource.query('SELECT set_tenant_api_key($1, $2) AS id', [tenantId, apiKeyHash]);
+    return Boolean(row?.id);
+  }
+
   setTenantLimits<T>(tenantId: string, changes: Record<string, number | null | undefined>): Promise<T[]> {
     return this.dataSource.query('SELECT * FROM set_tenant_limits($1, $2::jsonb)', [tenantId, JSON.stringify(changes)]);
   }

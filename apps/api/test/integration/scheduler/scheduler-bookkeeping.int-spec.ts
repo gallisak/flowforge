@@ -29,6 +29,11 @@ describe('scheduler bookkeeping', () => {
     return values.filter((value) => value.labels.outcome === 'started').reduce((sum, value) => sum + value.value, 0);
   }
 
+  async function skippedRuns(): Promise<number> {
+    const { values } = await metrics.scheduledRuns.get();
+    return values.filter((value) => value.labels.outcome === 'skipped').reduce((sum, value) => sum + value.value, 0);
+  }
+
   async function tickAt(now: string): Promise<void> {
     setClock(now);
     await schedulers?.services[0].tick();
@@ -61,6 +66,21 @@ describe('scheduler bookkeeping', () => {
     await tickAt('2026-11-20T09:00:10Z');
 
     expect(await startedRuns()).toBe(before);
+    expect(await cronRuns(created.id)).toHaveLength(1);
+  });
+
+  it('counts skipped runs once even when the first attempt to fire them was rolled back', async () => {
+    setClock('2026-11-20T08:30:00Z');
+    const created = await createScheduledWorkflow(app, tenant.apiKey, { cron: '0 * * * *', timezone: 'UTC', missedRunPolicy: 'skip' });
+    schedulers = await startInProcessSchedulers(1);
+    const enqueue = internals().executions.enqueueWithin.bind(internals().executions);
+    jest.spyOn(internals().executions, 'enqueueWithin').mockRejectedValueOnce(new Error('statement timeout')).mockImplementation(enqueue);
+    const before = await skippedRuns();
+
+    await tickAt('2026-11-20T12:00:05Z');
+    await tickAt('2026-11-20T12:01:00Z');
+
+    expect(await skippedRuns()).toBe(before + 3);
     expect(await cronRuns(created.id)).toHaveLength(1);
   });
 

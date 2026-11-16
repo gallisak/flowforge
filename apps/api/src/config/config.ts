@@ -191,9 +191,11 @@ class EnvReader {
     return token;
   }
 
-  clientAddressSecret(): string {
+  clientAddressSecret(nodeEnv: NodeEnv): string {
     const secret = this.env.CLIENT_ADDRESS_SECRET ?? '';
-    if (secret.length > 0 && secret.length < CLIENT_ADDRESS_SECRET_MIN_LENGTH) {
+    if (secret.length === 0 && nodeEnv === 'production') {
+      this.problems.push('CLIENT_ADDRESS_SECRET is required in production');
+    } else if (secret.length > 0 && secret.length < CLIENT_ADDRESS_SECRET_MIN_LENGTH) {
       this.problems.push(`CLIENT_ADDRESS_SECRET must be at least ${CLIENT_ADDRESS_SECRET_MIN_LENGTH} characters`);
     }
     return secret;
@@ -290,7 +292,7 @@ export function loadApiConfig(env: Env = process.env): ApiConfig {
     webhookSecretGraceSeconds: read.integer('WEBHOOK_SECRET_GRACE_SECONDS', 86_400, 0, 2_592_000),
     tenantRateLimitPerMinute: read.integer('TENANT_RATE_LIMIT_PER_MINUTE', 600, 1, 1_000_000),
     authFailuresPerMinute: read.integer('AUTH_FAILURES_PER_MINUTE', 60, 1, 1_000_000),
-    clientAddressSecret: read.clientAddressSecret(),
+    clientAddressSecret: read.clientAddressSecret(nodeEnv),
     trustProxy: read.trustProxy(),
     tenantMaxQueuedJobs: read.integer('TENANT_MAX_QUEUED_JOBS', 10_000, 1, 10_000_000),
     tenantMaxWorkflows: read.integer('TENANT_MAX_WORKFLOWS', 1_000, 1, 1_000_000),
