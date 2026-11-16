@@ -66,21 +66,46 @@ export const metrics = {
 
 const QUEUE_DEPTH = 'flowforge_queue_depth';
 const OUTBOX_BACKLOG = 'flowforge_outbox_backlog';
+const COLLECT_ERRORS = 'flowforge_metrics_collect_errors_total';
+export const GAUGE_COLLECT_TIMEOUT_MS = 2_000;
 
-export function registerDatabaseGauges(dataSource: DataSource, topTenants: number): void {
-  for (const name of [QUEUE_DEPTH, OUTBOX_BACKLOG]) registry.removeSingleMetric(name);
+function withinDeadline<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
+export function registerDatabaseGauges(dataSource: DataSource, topTenants: number, collectTimeoutMs = GAUGE_COLLECT_TIMEOUT_MS): void {
+  for (const name of [QUEUE_DEPTH, OUTBOX_BACKLOG, COLLECT_ERRORS]) registry.removeSingleMetric(name);
+  const collectErrors = new Counter({
+    name: COLLECT_ERRORS,
+    help: 'Database gauges that kept their previous value because the database did not answer in time',
+    labelNames: ['gauge'],
+    registers: [registry],
+  });
+  const collectSafely = async (gauge: string, collect: () => Promise<void>) => {
+    try {
+      await withinDeadline(collect(), collectTimeoutMs);
+    } catch {
+      collectErrors.inc({ gauge });
+    }
+  };
   new Gauge({
     name: QUEUE_DEPTH,
     help: `Jobs per tenant: queued (ready to run), delayed (waiting for a timer or a retry) and running; tenants beyond the ${topTenants} largest are summed as "other"`,
     labelNames: ['tenant_id', 'status'],
     registers: [registry],
     async collect() {
-      const rows: Array<{ tenant: string; status: string; jobs: number }> = await dataSource.query(
-        'SELECT * FROM queue_depth_by_tenant($1)',
-        [topTenants],
-      );
-      this.reset();
-      for (const row of rows) this.set({ tenant_id: row.tenant, status: row.status }, row.jobs);
+      await collectSafely(QUEUE_DEPTH, async () => {
+        const rows: Array<{ tenant: string; status: string; jobs: number }> = await dataSource.query(
+          'SELECT * FROM queue_depth_by_tenant($1)',
+          [topTenants],
+        );
+        this.reset();
+        for (const row of rows) this.set({ tenant_id: row.tenant, status: row.status }, row.jobs);
+      });
     },
   });
   new Gauge({
@@ -88,8 +113,10 @@ export function registerDatabaseGauges(dataSource: DataSource, topTenants: numbe
     help: 'Execution notifications waiting for delivery',
     registers: [registry],
     async collect() {
-      const [row]: Array<{ events: number }> = await dataSource.query('SELECT outbox_backlog() AS events');
-      this.set(row.events);
+      await collectSafely(OUTBOX_BACKLOG, async () => {
+        const [row]: Array<{ events: number }> = await dataSource.query('SELECT outbox_backlog() AS events');
+        this.set(row.events);
+      });
     },
   });
 }

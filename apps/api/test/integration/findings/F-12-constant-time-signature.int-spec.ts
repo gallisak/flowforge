@@ -32,20 +32,35 @@ describe('F-12 webhook signatures are compared in constant time', () => {
     await app?.close();
   });
 
+  const decodedSignature = (headers: Record<string, string>) => Buffer.from(headers[signatureHeader(headers)].split(',')[1], 'base64');
+  const expectedSignature = (headers: Record<string, string>) =>
+    crypto
+      .createHmac('sha256', Buffer.from(target.webhookSecret.slice('whsec_'.length), 'base64'))
+      .update(`${headers['webhook-id']}.${headers['webhook-timestamp']}.${body}`)
+      .digest();
+
   it('compares a valid signature with timingSafeEqual', async () => {
     const compare = jest.spyOn(crypto, 'timingSafeEqual');
+    const headers = signWebhook(target.webhookSecret, body);
 
-    await deliver(signWebhook(target.webhookSecret, body)).expect(202);
+    await deliver(headers).expect(202);
 
-    expect(compare).toHaveBeenCalled();
+    expect(compare).toHaveBeenCalledWith(expectedSignature(headers), decodedSignature(headers));
   });
 
   it('compares a forged signature of the right length with timingSafeEqual', async () => {
     const compare = jest.spyOn(crypto, 'timingSafeEqual');
+    const headers = tampered(signWebhook(target.webhookSecret, body));
 
-    await deliver(tampered(signWebhook(target.webhookSecret, body))).expect(401);
+    await deliver(headers).expect(401);
 
-    expect(compare).toHaveBeenCalled();
+    expect(compare).toHaveBeenCalledWith(expectedSignature(headers), decodedSignature(headers));
+  });
+
+  it('lets the constant time comparison decide, not another comparison', async () => {
+    jest.spyOn(crypto, 'timingSafeEqual').mockReturnValue(false);
+
+    await deliver(signWebhook(target.webhookSecret, body)).expect(401);
   });
 
   it('rejects a signature of the wrong length without failing', async () => {

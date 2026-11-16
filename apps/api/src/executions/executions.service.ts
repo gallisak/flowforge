@@ -78,7 +78,7 @@ export class ExecutionsService {
   ): Promise<EnqueuedExecution> {
     const current = await em.findOne(Workflow, {
       where: { id: workflow.id, tenantId: workflow.tenantId },
-      lock: { mode: 'pessimistic_read' },
+      lock: { mode: 'for_key_share' },
     });
     if (!current) throw new NotFoundException('Workflow not found');
     if (triggerKey) {
@@ -119,7 +119,7 @@ export class ExecutionsService {
     }
     await em.save(em.create(Job, { tenantId: workflow.tenantId, executionId: id, maxAttempts: this.limits.jobMaxAttempts }));
     this.logger.log({ msg: 'execution created', executionId: id, workflowId: workflow.id, tenantId: workflow.tenantId, trigger });
-    return { execution: await em.findOneOrFail(Execution, { where: { id } }), created: true };
+    return { execution: await em.findOneOrFail(Execution, { where: { tenantId: workflow.tenantId, id } }), created: true };
   }
 
   list(tenantId: string, filter: ExecutionListFilter = {}): Promise<ExecutionPage> {

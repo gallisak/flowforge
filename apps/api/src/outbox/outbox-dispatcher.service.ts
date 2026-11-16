@@ -200,7 +200,7 @@ export class OutboxDispatcher implements BeforeApplicationShutdown {
       update = { ...released, status: 'dead', lastError: outcome.error, lastStatusCode: outcome.kind === 'retry' ? (outcome.status ?? null) : null };
     }
     const result = await this.db.run(event.tenantId, (em) =>
-      em.update(OutboxEvent, { id: event.id, lockedBy: this.dispatcherId, attempts: event.attempts, status: 'delivering' }, update),
+      em.update(OutboxEvent, { tenantId: event.tenantId, id: event.id, lockedBy: this.dispatcherId, attempts: event.attempts, status: 'delivering' }, update),
     );
     if (result.affected !== 1) {
       this.logger.warn('notification lease was lost before its result was recorded');

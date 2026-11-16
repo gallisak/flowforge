@@ -3,7 +3,7 @@
   "info": {
     "title": "FlowForge API",
     "version": "1.0.0",
-    "description": "Multi-tenant durable workflow platform. Tenant endpoints use the `x-api-key` header; every tenant request counts against its per-minute rate limit. Request bodies must be `application/json` in UTF-8 (`415` otherwise) and are limited to 100 KiB and 64 levels of JSON nesting; a request body with a property the endpoint does not know is refused with `400`."
+    "description": "Multi-tenant durable workflow platform. Tenant endpoints use the `x-api-key` header; every tenant request counts against its per-minute rate limit. Request bodies must be `application/json` in UTF-8 (`415` otherwise) and are limited to 1 MiB and 64 levels of JSON nesting; a request body with a property the endpoint does not know is refused with `400`. When the database does not answer in time, a request is refused with `503` and `Retry-After` instead of waiting."
   },
   "servers": [
     {
@@ -84,6 +84,9 @@
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -97,6 +100,61 @@
           }
         },
         "operationId": "createTenant"
+      }
+    },
+    "/tenants/{id}/api-key": {
+      "post": {
+        "tags": [
+          "Tenants"
+        ],
+        "summary": "Replace the API key of a tenant",
+        "description": "Issues a new key and revokes the previous one immediately; use it when a key leaks. Live event streams opened with the old key stay open until they reconnect.",
+        "security": [
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/Id"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new API key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RotatedApiKey"
+                }
+              }
+            },
+            "headers": {
+              "X-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        },
+        "operationId": "rotateTenantApiKey"
       }
     },
     "/tenants/{id}/limits": {
@@ -148,6 +206,9 @@
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -237,6 +298,9 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "listWorkflows"
@@ -305,6 +369,9 @@
           },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -378,6 +445,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "getWorkflow"
@@ -451,6 +521,9 @@
           },
           "412": {
             "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -513,6 +586,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "deleteWorkflow"
@@ -579,6 +655,9 @@
           },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -686,6 +765,9 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "description": "Keyset pagination over `(createdAt, id)`.",
@@ -747,6 +829,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "getExecution"
@@ -807,6 +892,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "getExecutionOutput",
@@ -879,6 +967,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "getStepOutput",
@@ -1044,6 +1135,19 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "409": {
+            "description": "This `webhook-id` was already delivered to another workflow of the tenant, so the delivery is refused instead of starting that workflow too.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         },
         "operationId": "receiveWebhook"
@@ -1098,6 +1202,9 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "listWebhookSecrets"
@@ -1153,6 +1260,9 @@
           },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "rotateWebhookSecret"
@@ -1197,6 +1307,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "revokeWebhookSecret"
@@ -1251,6 +1364,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "getNotificationEndpoint"
@@ -1316,6 +1432,9 @@
           },
           "413": {
             "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "requestBody": {
@@ -1362,6 +1481,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "removeNotificationEndpoint"
@@ -1416,6 +1538,9 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "listNotificationSecrets"
@@ -1471,6 +1596,9 @@
           },
           "415": {
             "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "rotateNotificationSecret"
@@ -1515,6 +1643,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "revokeNotificationSecret"
@@ -1690,6 +1821,9 @@
           },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         },
         "operationId": "listNotificationEvents"
@@ -2803,6 +2937,23 @@
             "format": "date-time"
           }
         }
+      },
+      "RotatedApiKey": {
+        "type": "object",
+        "required": [
+          "id",
+          "apiKey"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "apiKey": {
+            "type": "string",
+            "description": "The new key, shown only once. The previous key stops working at once."
+          }
+        }
       }
     },
     "responses": {
@@ -2847,7 +2998,7 @@
         }
       },
       "PayloadTooLarge": {
-        "description": "The body is larger than 100 KiB.",
+        "description": "The body is larger than 1 MiB.",
         "content": {
           "application/json": {
             "schema": {
@@ -2881,11 +3032,19 @@
         }
       },
       "ServiceUnavailable": {
-        "description": "The API is shutting down; reconnect to another instance.",
+        "description": "The database did not answer in time, or the API is shutting down; try again after `Retry-After` seconds, possibly on another instance.",
         "content": {
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/Error"
+            }
+          }
+        },
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before trying again.",
+            "schema": {
+              "type": "integer"
             }
           }
         }

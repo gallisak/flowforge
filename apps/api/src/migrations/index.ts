@@ -35,6 +35,8 @@ import { BoundedMaintenance1794322300000 } from './1794322300000-bounded-mainten
 import { IdleTenantClaims1794322400000 } from './1794322400000-idle-tenant-claims';
 import { TimeZoneAwareTimestamps1794322500000 } from './1794322500000-time-zone-aware-timestamps';
 import { WorkflowRevisions1794322600000 } from './1794322600000-workflow-revisions';
+import { ReviewHardening1794322700000 } from './1794322700000-review-hardening';
+import { TenantScopedVersionIndex1794322800000 } from './1794322800000-tenant-scoped-version-index';
 
 export const migrations = [
   Baseline1794305090749,
@@ -74,4 +76,6 @@ export const migrations = [
   IdleTenantClaims1794322400000,
   TimeZoneAwareTimestamps1794322500000,
   WorkflowRevisions1794322600000,
+  ReviewHardening1794322700000,
+  TenantScopedVersionIndex1794322800000,
 ];

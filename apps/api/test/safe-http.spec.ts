@@ -45,6 +45,8 @@ describe('isPublicAddress', () => {
     '2002:7f00:1::',
     '2001:db8::1',
     'ff02::1',
+    '168.63.129.16',
+    '::ffff:168.63.129.16',
     'not-an-ip',
   ])('blocks %s', (address) => {
     expect(isPublicAddress(address)).toBe(false);
@@ -112,6 +114,7 @@ describe('SafeHttpClient', () => {
       if (kind === 'to') res.writeHead(Number(target), { location: `${other.url}/landed` }).end();
       else if (kind === 'same') res.writeHead(302, { location: '/landed' }).end();
       else if (kind === 'loop') res.writeHead(302, { location: '/loop' }).end();
+      else if (kind === 'badlocation') res.writeHead(302, { location: 'http://[zz' }).end();
       else if (kind === 'blocked') res.writeHead(307, { location: `${blocked.url}/landed` }).end();
       else if (kind === 'hang') return;
       else if (kind === 'big') res.writeHead(200).end('b'.repeat(1_025));
@@ -178,6 +181,10 @@ describe('SafeHttpClient', () => {
   it('checks every redirect target', async () => {
     await expect(send(`${allowed.url}/blocked`)).rejects.toBeInstanceOf(DestinationNotAllowedError);
     expect(blocked.requests).toHaveLength(0);
+  });
+
+  it('treats a redirect to a malformed location as a permanent error', async () => {
+    await expect(send(`${allowed.url}/badlocation`)).rejects.toBeInstanceOf(InvalidRequestUrlError);
   });
 
   it('stops after the redirect limit', async () => {

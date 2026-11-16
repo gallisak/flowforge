@@ -33,7 +33,7 @@ EXECUTION_ID="$(curl -fsS -X POST "$API/workflows/$WORKFLOW_ID/run" -H "x-api-ke
 
 STATUS=""
 for _ in $(seq 1 60); do
-  STATUS="$(curl -fsS "$API/executions/$EXECUTION_ID" -H "x-api-key: $KEY" | jq -r .status)"
+  STATUS="$(curl -fsS "$API/executions/$EXECUTION_ID" -H "x-api-key: $KEY" | jq -r .status || true)"
   [[ "$STATUS" == "succeeded" || "$STATUS" == "failed" ]] && break
   sleep 1
 done
@@ -52,4 +52,12 @@ for attempt in $(seq 1 $(( 3 * ${FAILURES_PER_MINUTE:-60} ))); do
 done
 [[ -n "$LIMITED" ]] || fail "failed logins with a forged X-Forwarded-For were never limited"
 
-echo "smoke test passed: execution $EXECUTION_ID succeeded, forged client addresses are limited"
+EDGE="$(docker ps -q --filter label=com.docker.compose.service=edge --filter "publish=${WEB_PORT:-3001}" | head -n 1)"
+[[ -n "$EDGE" ]] || fail "could not find the edge container published on port ${WEB_PORT:-3001}"
+OTHER_CLIENT="$(docker exec "$EDGE" sh -c "wget -S -O /dev/null --header 'content-type: application/json' \
+  --header 'origin: ${APP_ORIGIN:-http://127.0.0.1:8080}' --post-data '{\"apiKey\":\"ff_smoke_other_client\"}' \
+  http://127.0.0.1:8080/api/connect 2>&1 | grep -m 1 -o 'HTTP/1.1 [0-9]*' || true")"
+[[ "$OTHER_CLIENT" == "HTTP/1.1 400" ]] \
+  || fail "another client was answered '$OTHER_CLIENT' instead of 400: the frontend and the API do not share CLIENT_ADDRESS_SECRET"
+
+echo "smoke test passed: execution $EXECUTION_ID succeeded, forged client addresses are limited, other clients are not"

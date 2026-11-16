@@ -12,6 +12,7 @@ import { MISSED_RUN_POLICIES } from '../../../src/scheduler/cron-schedule';
 import { CreateTenantDto, UpdateTenantLimitsDto } from '../../../src/tenants/tenants.controller';
 import { CreateWorkflowDto, UpdateWorkflowDto } from '../../../src/workflows/workflow.dto';
 import { ListWorkflowsQuery } from '../../../src/workflows/workflows.controller';
+import { REQUEST_BODY_MAX_BYTES } from '../../../src/app.setup';
 import { createTestApp } from '../../support/app';
 import { useIntegrationContext } from '../../support/context';
 import { eventually } from '../../support/eventually';
@@ -261,7 +262,7 @@ describe('OpenAPI document', () => {
   it('documents the answers to oversized and non-JSON bodies on every operation that accepts a body', async () => {
     const server = app.getHttpServer();
     const unknown = '00000000-0000-4000-8000-000000000000';
-    const oversized = JSON.stringify({ name: 'x'.repeat(200 * 1024) });
+    const oversized = JSON.stringify({ name: 'x'.repeat(REQUEST_BODY_MAX_BYTES) });
     const undocumented: string[] = [];
     for (const [path, item] of Object.entries(document.paths).filter(([, entry]) => !entry.servers)) {
       for (const method of ['post', 'put', 'patch'].filter((name) => name in item)) {

@@ -9,7 +9,6 @@ export type StepDefinition =
 
 @Entity('workflows')
 @Check('CHK_workflows_missed_run_policy', `"missedRunPolicy" IN ('skip', 'once', 'all')`)
-@Index(['tenantId'])
 @Index('IDX_workflows_due', { synchronize: false })
 @Index('IDX_workflows_tenant_created', ['tenantId', 'createdAt', 'id'])
 export class Workflow {

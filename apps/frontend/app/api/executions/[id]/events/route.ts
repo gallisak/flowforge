@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, unreachable } from '@/lib/api';
+import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, isRedirect, timeoutError, UNEXPECTED_REDIRECT, unreachable } from '@/lib/api';
 import { clientAddressHeaders } from '@/lib/client-address';
 import { problemBody } from '@/lib/problem';
 
@@ -10,12 +10,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function problem(status: number, message: string) {
   return NextResponse.json(problemBody(status, message), { status });
-}
-
-function timeoutError(): Error {
-  const error = new Error('The API did not answer in time');
-  error.name = 'TimeoutError';
-  return error;
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -36,12 +30,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       headers: { 'x-api-key': key, accept: 'text/event-stream', ...clientAddressHeaders(req.headers) },
       signal: upstreamAbort.signal,
       cache: 'no-store',
+      redirect: 'manual',
     });
   } catch (error) {
     const failure = unreachable(upstreamAbort.signal.reason ?? error);
     return problem(failure.status, failure.message);
   } finally {
     clearTimeout(headersTimer);
+  }
+
+  if (isRedirect(upstream)) {
+    await upstream.body?.cancel().catch(() => undefined);
+    return problem(502, UNEXPECTED_REDIRECT);
   }
 
   if (!upstream.ok || !upstream.body) {

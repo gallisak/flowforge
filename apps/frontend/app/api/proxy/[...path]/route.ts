@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, unreachable } from '@/lib/api';
+import { API_KEY_COOKIE, API_TIMEOUT_MS, API_URL, isRedirect, UNEXPECTED_REDIRECT, unreachable, upstreamSignal } from '@/lib/api';
 import { clientAddressHeaders } from '@/lib/client-address';
 import { BodyTooLargeError, MAX_PROXY_BODY_BYTES, MAX_PROXY_RESPONSE_BYTES, readLimitedText } from '@/lib/request-body';
 import { isSameOrigin } from '@/lib/same-origin';
@@ -86,11 +86,17 @@ async function forward(req: NextRequest, { params }: { params: Promise<{ path: s
       },
       body,
       cache: 'no-store',
-      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      redirect: 'manual',
+      signal: upstreamSignal(req.signal, API_TIMEOUT_MS),
     });
   } catch (error) {
     const failure = unreachable(error);
     return problem(failure.status, failure.message);
+  }
+
+  if (isRedirect(upstream)) {
+    await upstream.body?.cancel().catch(() => undefined);
+    return problem(502, UNEXPECTED_REDIRECT);
   }
 
   if ((declaredLength(upstream) ?? 0) > MAX_PROXY_RESPONSE_BYTES) {

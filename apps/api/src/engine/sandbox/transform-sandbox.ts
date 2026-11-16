@@ -1,4 +1,5 @@
 import { Worker } from 'worker_threads';
+import { truncatedText } from '../../common/storable';
 import { SANDBOX_THREAD_SOURCE, SandboxReply, SandboxRequest } from './sandbox-thread';
 
 export interface SandboxLimits {
@@ -18,6 +19,7 @@ export class TransformError extends Error {
 }
 
 export const SANDBOX_STACK_BYTES = 48 * 1024;
+export const TRANSFORM_ERROR_MAX_CHARS = 640;
 const THREAD_START_TIMEOUT_MS = 10_000;
 const THREAD_HEAP_MB = 64;
 
@@ -139,7 +141,7 @@ export class TransformSandbox {
     } finally {
       this.release(thread);
     }
-    if ('error' in reply) throw new TransformError(reply.error);
+    if ('error' in reply) throw new TransformError(truncatedText(String(reply.error), TRANSFORM_ERROR_MAX_CHARS));
     if ('outputTooLarge' in reply || (reply.output !== undefined && Buffer.byteLength(reply.output) > outputMaxBytes)) {
       throw new TransformError(`step output exceeds ${outputMaxBytes} bytes`);
     }

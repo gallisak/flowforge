@@ -110,6 +110,15 @@ describe('execution events route', () => {
     expect(upstreamSignal?.aborted).toBe(true);
   });
 
+  it('does not follow a redirect from the API', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://collector.example/steal' } }));
+
+    const res = await GET(make(), context);
+
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+    expect(res.status).toBe(502);
+  });
+
   it('answers 401 without calling the API when no key is stored', async () => {
     const res = await GET(make({ key: null }), context);
 

@@ -4,13 +4,13 @@ import { PER_STEP_REAPER, PER_STEP_REAPER_SIGNATURE } from './1794321800000-per-
 import { WATCH_EXECUTION } from './1794321850000-watched-execution-notifications';
 import { RETENTION_PURGE } from './1794321900000-data-retention';
 
-const LEASE_EXPIRED = 'lease expired: the worker stopped renewing its lease';
+export const LEASE_EXPIRED = 'lease expired: the worker stopped renewing its lease';
 const REAPER_SIGNATURE = 'reap_expired_jobs(integer, integer, integer)';
 const PURGE_SIGNATURE = 'purge_finished_data(interval, integer)';
 const WATCH_SIGNATURE = 'watch_execution(uuid, integer)';
 const TRIGGER_FUNCTIONS = ['measure_output()', 'notify_execution_change()'];
 
-const REAPER = `
+export const REAPER = `
   CREATE FUNCTION reap_expired_jobs(p_retry_base_ms integer DEFAULT 1000, p_retry_cap_ms integer DEFAULT 300000, p_batch integer DEFAULT 500)
     RETURNS TABLE ${REAPER_RESULT}
     LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public, pg_temp

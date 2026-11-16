@@ -31,6 +31,7 @@ describe('configuration check at server start', () => {
 
   it('starts normally with a valid configuration', () => {
     vi.stubEnv('API_URL', 'http://api:3000');
+    vi.stubEnv('CLIENT_ADDRESS_SECRET', 's'.repeat(32));
 
     register();
 

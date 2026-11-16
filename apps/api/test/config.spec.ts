@@ -50,18 +50,18 @@ describe('loadApiConfig', () => {
   });
 
   it('rejects a placeholder admin token in production', () => {
-    expect(problemsOf(() => loadApiConfig({ NODE_ENV: 'production', DATABASE_URL, ADMIN_TOKEN: 'change-me-admin' }))).toEqual([
+    expect(problemsOf(() => loadApiConfig({ NODE_ENV: 'production', DATABASE_URL, ADMIN_TOKEN: 'change-me-admin', CLIENT_ADDRESS_SECRET: STRONG_TOKEN }))).toEqual([
       'ADMIN_TOKEN must be a random secret of at least 32 characters in production',
     ]);
   });
 
   it('rejects a long admin token that still looks like a placeholder in production', () => {
     const token = `change-me-${'x'.repeat(40)}`;
-    expect(problemsOf(() => loadApiConfig({ NODE_ENV: 'production', DATABASE_URL, ADMIN_TOKEN: token }))).toHaveLength(1);
+    expect(problemsOf(() => loadApiConfig({ NODE_ENV: 'production', DATABASE_URL, ADMIN_TOKEN: token, CLIENT_ADDRESS_SECRET: STRONG_TOKEN }))).toHaveLength(1);
   });
 
   it('accepts a strong admin token in production', () => {
-    expect(loadApiConfig({ NODE_ENV: 'production', DATABASE_URL, ADMIN_TOKEN: STRONG_TOKEN }).nodeEnv).toBe('production');
+    expect(loadApiConfig({ NODE_ENV: 'production', DATABASE_URL, ADMIN_TOKEN: STRONG_TOKEN, CLIENT_ADDRESS_SECRET: STRONG_TOKEN }).nodeEnv).toBe('production');
   });
 
   it('rejects short admin tokens in development', () => {
@@ -102,6 +102,12 @@ describe('loadApiConfig', () => {
       throw new Error('expected loadApiConfig to throw');
     })();
     expect(error.message).not.toMatch(/secret-password|change-me-admin/);
+  });
+
+  it('requires the client address secret in production, so the frontend and the API cannot disagree silently', () => {
+    expect(problemsOf(() => loadApiConfig({ NODE_ENV: 'production', DATABASE_URL, ADMIN_TOKEN: STRONG_TOKEN }))).toEqual([
+      'CLIENT_ADDRESS_SECRET is required in production',
+    ]);
   });
 
   it('reads a shared client address secret and rejects a short one', () => {

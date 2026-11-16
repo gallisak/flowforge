@@ -62,13 +62,15 @@ const CROSS_ORIGIN_HEADERS = new Set([
 ]);
 const BODY_HEADERS = new Set(['content-type', 'content-length', 'content-encoding', 'transfer-encoding']);
 const GLOBAL_UNICAST_V6 = ipaddr.parseCIDR('2000::/3');
+const PROVIDER_SERVICE_ADDRESSES = [ipaddr.parseCIDR('168.63.129.16/32')];
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 
 export function isPublicAddress(address: string): boolean {
   if (!ipaddr.isValid(address)) return false;
   const parsed = ipaddr.process(address);
   if (parsed.range() !== 'unicast') return false;
-  return parsed.kind() === 'ipv4' || parsed.match(GLOBAL_UNICAST_V6);
+  if (parsed.kind() === 'ipv4') return !PROVIDER_SERVICE_ADDRESSES.some((range) => (parsed as ipaddr.IPv4).match(range as [ipaddr.IPv4, number]));
+  return parsed.match(GLOBAL_UNICAST_V6);
 }
 
 const DEFAULT_DNS_TIMEOUT_MS = 2_000;
@@ -170,7 +172,7 @@ export class SafeHttpClient {
       }
       await response.body.dump();
       if (hop >= this.options.maxRedirects) throw new TooManyRedirectsError(`more than ${this.options.maxRedirects} redirects`, response.statusCode);
-      const next = this.parse(new URL(location, url).toString());
+      const next = this.parse(URL.parse(location, url)?.toString() ?? '');
       if (next.origin !== url.origin) {
         headers = Object.fromEntries(Object.entries(headers).filter(([name]) => CROSS_ORIGIN_HEADERS.has(name.toLowerCase())));
       }

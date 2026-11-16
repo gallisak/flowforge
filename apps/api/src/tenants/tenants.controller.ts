@@ -34,6 +34,10 @@ export class UpdateTenantLimitsDto {
   rateLimitPerMinute?: number | null;
 }
 
+function newApiKey(): string {
+  return `ff_${randomBytes(24).toString('hex')}`;
+}
+
 const LIMIT_FIELDS = ['maxConcurrentJobs', 'maxQueuedJobs', 'rateLimitPerMinute'] as const;
 
 interface TenantLimitsView {
@@ -53,13 +57,20 @@ export class TenantsController {
 
   @Post()
   async create(@Body() dto: CreateTenantDto) {
-    const apiKey = `ff_${randomBytes(24).toString('hex')}`;
+    const apiKey = newApiKey();
     const id = randomUUID();
     const { tenant, secret } = await this.db.run(id, async (em) => ({
       tenant: await em.save(em.create(Tenant, { id, name: dto.name, apiKeyHash: hashApiKey(apiKey) })),
       secret: await this.secrets.create(em, id),
     }));
     return { id: tenant.id, name: tenant.name, apiKey, webhookSecret: secret.secret };
+  }
+
+  @Post(':id/api-key')
+  async rotateApiKey(@Param('id', ParseUUIDPipe) id: string) {
+    const apiKey = newApiKey();
+    if (!(await this.db.setTenantApiKey(id, hashApiKey(apiKey)))) throw new NotFoundException('Tenant not found');
+    return { id, apiKey };
   }
 
   @Patch(':id/limits')

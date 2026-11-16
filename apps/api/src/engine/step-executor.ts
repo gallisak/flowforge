@@ -24,9 +24,11 @@ import {
   UrlTemplateError,
 } from './template';
 
+export const STEP_ERROR_MAX_CHARS = 2048;
+
 export class StepError extends Error {
   constructor(message: string, readonly retryable = true) {
-    super(message);
+    super(truncatedText(message, STEP_ERROR_MAX_CHARS));
   }
 }
 

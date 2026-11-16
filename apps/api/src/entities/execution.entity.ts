@@ -1,9 +1,11 @@
-import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
+import { Check, Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, Unique } from 'typeorm';
 
 export const EXECUTION_STATUSES = ['pending', 'running', 'waiting', 'succeeded', 'failed'] as const;
 export type ExecutionStatus = (typeof EXECUTION_STATUSES)[number];
 
 @Entity('executions')
+@Check('CHK_executions_status', `"status" IN ('pending', 'running', 'waiting', 'succeeded', 'failed')`)
+@Check('CHK_executions_trigger', `"trigger" IN ('api', 'webhook', 'cron')`)
 @Unique('UQ_executions_tenant_id', ['tenantId', 'id'])
 @Index('IDX_executions_tenant_created', ['tenantId', 'createdAt', 'id'])
 @Index('IDX_executions_tenant_status_created', ['tenantId', 'status', 'createdAt', 'id'])

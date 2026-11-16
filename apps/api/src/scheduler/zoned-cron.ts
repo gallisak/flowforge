@@ -52,11 +52,8 @@ export function utcOffsetMs(timezone: string, instantMs: number): number {
 
 const HOURS_PER_DAY = 24;
 
-export function followsWallClockByHour(cron: string): boolean {
-  const hours = [...parseExpression(cron, { tz: 'UTC' }).fields.hour].sort((a, b) => a - b);
-  if (hours.length < 2 || hours[0] !== 0) return false;
-  const step = hours[1];
-  return hours.every((hour, i) => hour === i * step) && hours[hours.length - 1] + step >= HOURS_PER_DAY;
+export function runsEveryHour(cron: string): boolean {
+  return parseExpression(cron, { tz: 'UTC' }).fields.hour.length === HOURS_PER_DAY;
 }
 
 interface WallTime {
@@ -93,7 +90,7 @@ export class ZonedCronIterator {
     const offsets = [afterMs - NEARBY_MS, afterMs, afterMs + NEARBY_MS].map((instant) => utcOffsetMs(timezone, instant));
     const firstWallMs = afterMs + Math.min(...offsets);
     this.wallTimes = parseExpression(cron, { currentDate: new Date(firstWallMs - 1000), tz: 'UTC' });
-    this.byElapsedTime = followsWallClockByHour(cron);
+    this.byElapsedTime = runsEveryHour(cron);
     this.lastEmitted = afterMs;
   }
 

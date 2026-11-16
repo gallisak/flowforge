@@ -27,11 +27,16 @@ export const LEASE_NOT_RENEWED = 'the worker could not renew its lease in time; 
 
 class LeaseNotRenewedError extends LeaseLostError {}
 
+function ownerOf(job: Job, workerId: string): string {
+  return job.lockedBy ?? workerId;
+}
+
 @Injectable()
 export class JobRunnerService implements BeforeApplicationShutdown {
   private readonly logger = new Logger(JobRunnerService.name);
   readonly workerId = `worker-${randomUUID().slice(0, 8)}`;
   private running = false;
+  private stopping = false;
   private reaperTimer?: NodeJS.Timeout;
   private loops: Promise<void>[] = [];
   private readonly inFlight = new Map<string, AbortController>();
@@ -57,6 +62,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
   async beforeApplicationShutdown(): Promise<void> {
     if (!this.running) return;
     this.running = false;
+    this.stopping = true;
     if (this.reaperTimer) clearTimeout(this.reaperTimer);
     const allLoops = Promise.allSettled(this.loops);
     let graceTimer: NodeJS.Timeout | undefined;
@@ -97,14 +103,14 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     while (this.running) {
       try {
         const claimStartedAt = Date.now();
-        const job = await this.queue.claimNext(this.workerId, this.config.leaseSeconds, this.config.tenantMaxConcurrentJobs);
+        const job = await this.queue.claimNext(`${this.workerId}:${randomUUID()}`, this.config.leaseSeconds, this.config.tenantMaxConcurrentJobs);
         if (!job) {
           await sleep(250);
           continue;
         }
         metrics.jobClaimLatency.observe(Math.max(0, Date.now() - new Date(job.runAt).getTime()) / 1000);
         if (!this.running) {
-          await this.queue.release(job, this.workerId);
+          await this.queue.release(job, ownerOf(job, this.workerId));
           return;
         }
         await this.processWithLease(job, claimStartedAt);
@@ -137,7 +143,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
       timers.heartbeat = setTimeout(async () => {
         const sentAt = Date.now();
         try {
-          if (await this.queue.extendLease(job, this.workerId, this.config.leaseSeconds)) leaseRenewedAt(sentAt);
+          if (await this.queue.extendLease(job, ownerOf(job, this.workerId), this.config.leaseSeconds)) leaseRenewedAt(sentAt);
           else loseLease(new LeaseLostError(job.id));
         } catch (err) {
           this.logger.warn(`could not renew lease on job ${job.id}: ${(err as Error).message}`);
@@ -164,25 +170,26 @@ export class JobRunnerService implements BeforeApplicationShutdown {
 
   private async processInContext(job: Job, context: LogContext, signal?: AbortSignal): Promise<void> {
     const inTenant = <T>(work: (em: EntityManager) => Promise<T>) => this.db.run(job.tenantId, work);
+    const owner = ownerOf(job, this.workerId);
 
     try {
-      const execution = await inTenant((em) => em.findOne(Execution, { where: { id: job.executionId } }));
+      const execution = await inTenant((em) => em.findOne(Execution, { where: { tenantId: job.tenantId, id: job.executionId } }));
       if (!execution) throw new StepError('the execution of this job no longer exists', false);
       context.correlationId = execution.correlationId ?? undefined;
-      const workflowExists = await inTenant((em) => em.exists(Workflow, { where: { id: execution.workflowId } }));
+      const workflowExists = await inTenant((em) => em.exists(Workflow, { where: { tenantId: job.tenantId, id: execution.workflowId } }));
       if (!workflowExists) throw new StepError('the workflow of this execution was deleted', false);
       const snapshot = await inTenant((em) =>
-        em.findOne(WorkflowVersion, { where: { workflowId: execution.workflowId, version: execution.workflowVersion } }),
+        em.findOne(WorkflowVersion, { where: { tenantId: job.tenantId, workflowId: execution.workflowId, version: execution.workflowVersion } }),
       );
       if (!snapshot) throw new StepError(`version ${execution.workflowVersion} of the workflow is missing`, false);
       const steps = snapshot.steps;
 
-      const checkpoints = await inTenant((em) => em.find(StepRun, { where: { executionId: execution.id } }));
+      const checkpoints = await inTenant((em) => em.find(StepRun, { where: { tenantId: job.tenantId, executionId: execution.id } }));
       const succeeded = new Map(checkpoints.filter((r) => r.status === 'succeeded').map((r) => [r.stepIndex, r]));
       const waiting = new Set(checkpoints.filter((r) => r.status === 'waiting').map((r) => r.stepIndex));
-      let storedBytes = await inTenant((em) => this.storedOutputBytes(em, execution.id));
+      let storedBytes = await inTenant((em) => this.storedOutputBytes(em, job.tenantId, execution.id));
 
-      await this.queue.markRunning(job, this.workerId);
+      await this.queue.markRunning(job, owner);
       const ctx: StepContext = { input: execution.input, steps: {} };
       steps.forEach((step, i) => {
         const checkpoint = succeeded.get(i);
@@ -193,18 +200,22 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         if (succeeded.has(i)) continue;
         const step = steps[i];
         signal?.throwIfAborted();
+        if (this.stopping) {
+          await this.queue.release(job, owner);
+          return;
+        }
         if (step.type === 'delay') {
           const output = { waitedMs: step.ms };
-          if (waiting.has(i) && (await this.queue.wakeUp(job, this.workerId, i, output)) === 'resumed') {
+          if (waiting.has(i) && (await this.queue.wakeUp(job, owner, i, output)) === 'resumed') {
             ctx.steps[step.id] = output;
             continue;
           }
-          if (!waiting.has(i)) await this.queue.sleep(job, this.workerId, i, step.id, step.ms);
+          if (!waiting.has(i)) await this.queue.sleep(job, owner, i, step.id, step.ms);
           return;
         }
         const idempotencyKey = step.type === 'http' ? stepIdempotencyKey(execution.id, step.id) : null;
         context.stepId = step.id;
-        const stepRunId = await this.queue.startStep(job, this.workerId, i, step.id, idempotencyKey);
+        const stepRunId = await this.queue.startStep(job, owner, i, step.id, idempotencyKey);
         const stepStarted = performance.now();
         let result: { output: unknown; bytes: number };
         try {
@@ -222,11 +233,11 @@ export class JobRunnerService implements BeforeApplicationShutdown {
           throw new StepError(`the outputs of this execution would exceed ${this.config.executionOutputMaxBytes} bytes in total`, false);
         }
         storedBytes += result.bytes;
-        ctx.steps[step.id] = await this.queue.finishStep(job, this.workerId, stepRunId, result.output);
+        ctx.steps[step.id] = await this.queue.finishStep(job, owner, stepRunId, result.output);
         context.stepId = undefined;
       }
       const last = steps[steps.length - 1];
-      const completed = await this.queue.complete(job, this.workerId, {
+      const completed = await this.queue.complete(job, owner, {
         status: 'succeeded',
         output: ctx.steps[last.id] as object,
         finishedAt: () => 'now()',
@@ -251,7 +262,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
         return;
       }
       if (signal?.aborted && signal.reason instanceof WorkerShutdownError) {
-        await this.queue.release(job, this.workerId);
+        await this.queue.release(job, owner);
         return;
       }
       const retryable = err instanceof StepError ? err.retryable : true;
@@ -265,10 +276,10 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     }
   }
 
-  private async storedOutputBytes(em: EntityManager, executionId: string): Promise<number> {
+  private async storedOutputBytes(em: EntityManager, tenantId: string, executionId: string): Promise<number> {
     const [{ bytes }]: Array<{ bytes: string }> = await em.query(
-      `SELECT coalesce(sum("outputBytes"), 0) AS bytes FROM step_runs WHERE "executionId" = $1 AND "status" = 'succeeded'`,
-      [executionId],
+      `SELECT coalesce(sum("outputBytes"), 0) AS bytes FROM step_runs WHERE "tenantId" = $1 AND "executionId" = $2 AND "status" = 'succeeded'`,
+      [tenantId, executionId],
     );
     return Number(bytes);
   }
@@ -277,7 +288,7 @@ export class JobRunnerService implements BeforeApplicationShutdown {
     const policy = { baseMs: this.config.retryBaseMs, capMs: this.config.retryCapMs };
     for (let attempt = 1; ; attempt++) {
       try {
-        return await this.queue.fail(job, this.workerId, message, retryable, policy);
+        return await this.queue.fail(job, ownerOf(job, this.workerId), message, retryable, policy);
       } catch (error) {
         if (attempt >= RECORD_FAILURE_ATTEMPTS) throw error;
         this.logger.warn(`could not record the failed attempt, trying again: ${(error as Error).message}`);

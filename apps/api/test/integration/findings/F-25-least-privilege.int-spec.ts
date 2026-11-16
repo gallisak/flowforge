@@ -85,6 +85,7 @@ describe('F-25 the API runs with least privilege and refuses insecure configurat
       PORT: '0',
       DATABASE_URL: ctx.db.url,
       ADMIN_TOKEN: randomBytes(32).toString('hex'),
+      CLIENT_ADDRESS_SECRET: randomBytes(32).toString('hex'),
     });
     try {
       await api.waitForOutput(/listening on/);

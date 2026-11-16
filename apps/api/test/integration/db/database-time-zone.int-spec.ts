@@ -14,7 +14,7 @@ const CLOCK_TOLERANCE_MS = 60_000;
 describe('timestamps when the database session time zone is not UTC', () => {
   const ctx = useIntegrationContext();
   let app: INestApplication;
-  let workers: InProcessWorkers;
+  let workers: InProcessWorkers | undefined;
   let tenant: SeededTenant;
 
   const api = () => request(app.getHttpServer());
@@ -79,6 +79,8 @@ describe('timestamps when the database session time zone is not UTC', () => {
     expect(seen).toEqual([...created].reverse());
   });
   it('keeps the instants of rows written before the migration to time zone aware columns', async () => {
+    await workers?.stop();
+    workers = undefined;
     const owner = await new DataSource(dataSourceOptions(ctx.db.ownerUrl)).initialize();
     try {
       const latest = async () => (await owner.query(`SELECT name FROM migrations ORDER BY id DESC LIMIT 1`))[0].name;
